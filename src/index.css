@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #0a0f0d;
+  color: #e5e7eb;
+  margin: 0;
+}
+@layer components {
+  .input {
+    @apply w-full bg-[#0B1120] border border-slate-700 rounded-lg px-3.5 py-2.5
+           text-sm text-white placeholder-slate-600
+           focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/40 transition;
+  }
+}
