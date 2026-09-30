@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { formatBangkokClock, formatBangkokDate } from "./time";
 import { QRCodeCanvas } from "qrcode.react";
 import {
   Bell,
@@ -27,7 +28,8 @@ import {
 } from "lucide-react";
 import AddItemModal from "./AddItemModal";
 
-const API = "/api/inventory";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://fewer-hit-amy-watershed.trycloudflare.com";
+const API = `${API_BASE}/api/inventory`;
 const menu = [
   { label: "Dashboard", icon: LayoutDashboard },
   { label: "Access", icon: UserCheck },
@@ -43,8 +45,7 @@ const menu = [
 const statusFor = (item) => {
   if (Number(item.quantity) <= 0)
     return { label: "หมด", className: "bg-red-500/20 text-red-400" };
-  const initialQuantity = Number(item.initial_quantity || item.quantity || 0);
-  if (Number(item.quantity) <= initialQuantity * 0.5)
+  if (Number(item.quantity) <= Number(item.min_qty || 0))
     return { label: "ใกล้หมด", className: "bg-amber-500/20 text-amber-300" };
   return { label: "ปกติ", className: "bg-emerald-500/20 text-emerald-300" };
 };
@@ -54,7 +55,7 @@ function StatCard({ icon: Icon, label, value, detail, tone = "green" }) {
     green: "text-emerald-400",
     amber: "text-amber-300",
     red: "text-red-400",
-    cyan: "text-cyan-300",
+    cyan: "text-emerald-300",
   };
   return (
     <div className="rounded-lg border border-slate-700/70 bg-[#0d2034] p-4 shadow-lg shadow-black/10">
@@ -89,7 +90,7 @@ function QrModal({ item, onClose }) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm rounded-2xl border border-cyan-700/60 bg-[#0b1d30] p-6 text-center shadow-2xl"
+        className="w-full max-w-sm rounded-xl border border-line bg-panel p-6 text-center shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -170,10 +171,10 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
   };
 
   return (
-    <div className="min-h-screen bg-[#061321] text-slate-100">
-      <header className="flex h-14 items-center justify-between border-b border-cyan-900/50 bg-[#061522] px-5">
+    <div className="min-h-screen bg-base text-slate-100">
+      <header className="flex h-14 items-center justify-between border-b border-line bg-base px-5">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-400">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-neon/15 text-neon">
             <Package size={22} />
           </div>
           <h1 className="text-base font-bold tracking-wide md:text-lg">
@@ -187,9 +188,9 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
         <div className="flex items-center gap-4 text-xs text-slate-300">
           <div className="hidden text-right sm:block">
             <p className="font-mono text-sm">
-              {time.toLocaleTimeString("th-TH")}
+              {formatBangkokClock(time)}
             </p>
-            <p className="text-[10px] text-slate-500">21 พ.ค. 2025</p>
+            <p className="text-[10px] text-slate-500">{formatBangkokDate(time)}</p>
           </div>
           <Bell size={17} className="text-slate-400" />
           <div className="hidden items-center gap-2 border-l border-slate-700 pl-4 sm:flex">
@@ -206,7 +207,7 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
         </div>
       </header>
       <div className="flex min-h-[calc(100vh-3.5rem)]">
-        <aside className="hidden w-36 shrink-0 border-r border-cyan-950/70 bg-[#061725] py-4 md:block lg:w-44">
+        <aside className="hidden w-36 shrink-0 border-r border-line bg-panel py-4 md:block lg:w-44">
           <nav className="space-y-1 px-2">
             {menu.map(({ label, icon: Icon, badge, active }) => (
               <button
@@ -227,7 +228,7 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
               </button>
             ))}
           </nav>
-          <button className="mt-[min(48vh,27rem)] flex w-full items-center gap-3 border-t border-cyan-950/70 px-5 py-4 text-xs text-slate-400">
+          <button className="mt-[min(48vh,27rem)] flex w-full items-center gap-3 border-t border-line px-5 py-4 text-xs text-slate-400">
             <LogOut size={17} /> Logout
           </button>
         </aside>
@@ -235,7 +236,7 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
-                <Package className="text-cyan-400" size={24} />
+                <Package className="text-neon" size={24} />
                 <h2 className="text-xl font-bold">PRODUCTS / INVENTORY</h2>
               </div>
               <p className="mt-1 text-[11px] text-slate-400">
@@ -247,7 +248,7 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
                 setEditItem(null);
                 setShowAdd(true);
               }}
-              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-bold shadow-lg shadow-blue-950/40 transition hover:bg-blue-500"
+              className="flex items-center gap-2 rounded-lg bg-neon px-4 py-2.5 text-xs font-bold text-slate-950 shadow-lg shadow-emerald-950/40 transition hover:bg-emerald-300"
             >
               <Plus size={17} /> เพิ่มอุปกรณ์
             </button>
@@ -262,8 +263,8 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
             <StatCard
               icon={Warehouse}
               label="น้ำหนักรวม"
-              value="48.2 kg"
-              detail="เพิ่มขึ้น 4.3% จากเดือนก่อน"
+              value="—"
+              detail="ยังไม่ได้เชื่อมต่อ Load Cell"
               tone="cyan"
             />
             <StatCard
@@ -284,7 +285,7 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
               icon={SlidersHorizontal}
               label="สินค้าทั้งหมด (เฉพาะจำนวน)"
               value={totalQuantity.toLocaleString()}
-              detail="อัปเดตล่าสุด 21:56 น."
+              detail="ข้อมูลจาก Database"
               tone="cyan"
             />
           </section>
@@ -298,7 +299,7 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="ค้นหาสินค้า..."
-                className="w-full rounded-md border border-slate-700 bg-[#071625] py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-cyan-500"
+                className="w-full rounded-md border border-slate-700 bg-[#071625] py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-neon"
               />
             </div>
             <select
@@ -364,7 +365,7 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
                       return (
                         <tr
                           key={item.id}
-                          className="border-t border-slate-800 transition hover:bg-cyan-950/30"
+                          className="border-t border-slate-800 transition hover:bg-emerald-950/30"
                         >
                           <td className="px-4 py-2.5">
                             <div className="flex items-center gap-3">
@@ -407,7 +408,7 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
                               <button
                                 title="ดู QR Code"
                                 onClick={() => setQrItem(item)}
-                                className="rounded border border-cyan-600/60 p-1.5 text-cyan-400 hover:bg-cyan-500/10"
+                                className="rounded border border-emerald-600/60 p-1.5 text-emerald-400 hover:bg-emerald-500/10"
                               >
                                 <Eye size={14} />
                               </button>
@@ -447,7 +448,7 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
                   <button className="rounded border border-slate-700 p-1.5">
                     <ChevronRight className="rotate-180" size={14} />
                   </button>
-                  <span className="rounded bg-blue-600 px-2 py-1 text-white">
+                  <span className="rounded bg-neon px-2 py-1 text-slate-950">
                     1
                   </span>
                   <button className="rounded border border-slate-700 p-1.5">
@@ -463,8 +464,7 @@ export default function Inventory({ user, onBack, onOpenWithdraw, onNavigate }) 
                   <div
                     className="relative h-24 w-24 shrink-0 rounded-full"
                     style={{
-                      background:
-                        "conic-gradient(#10b981 0 52%, #f59e0b 52% 67%, #ef4444 67% 75%, #06b6d4 75% 100%)",
+                      background: `conic-gradient(#10b981 0 ${items.length ? (items.length - lowStock - outOfStock) / items.length * 100 : 0}%, #f59e0b ${items.length ? (items.length - lowStock - outOfStock) / items.length * 100 : 0}% ${items.length ? (items.length - outOfStock) / items.length * 100 : 0}%, #ef4444 ${items.length ? (items.length - outOfStock) / items.length * 100 : 0}% 100%)`,
                     }}
                   >
                     <div className="absolute inset-3 flex flex-col items-center justify-center rounded-full bg-[#0a1b2d]">

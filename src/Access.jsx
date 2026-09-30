@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import FaceCamera from "./FaceCamera";
+import { formatBangkokDateTime } from "./time";
 import {
   Bell,
   ChevronRight,
@@ -19,7 +21,8 @@ import {
   Save,
 } from "lucide-react";
 
-const API = "/api/auth";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://fewer-hit-amy-watershed.trycloudflare.com";
+const API = `${API_BASE}/api/auth`;
 
 const menu = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -33,17 +36,11 @@ const menu = [
   { key: "settings", label: "Settings", icon: Settings },
 ];
 
-const accessHistory = [
-  { time: "วันนี้ 20:15", method: "Face Recognition", device: "ทางเข้าหลัก", status: "อนุญาต" },
-  { time: "วันนี้ 18:42", method: "รหัสผ่าน", device: "Web Dashboard", status: "อนุญาต" },
-  { time: "เมื่อวาน 09:08", method: "Face Recognition", device: "ทางเข้าหลัก", status: "อนุญาต" },
-];
-
-function SecurityCard({ icon: Icon, title, detail, action, onClick }) {
+function SecurityCard({ icon: Icon, title, detail, onClick, ready = false }) {
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-4 rounded-xl border border-cyan-900/70 bg-[#0b2233] p-4 text-left transition hover:border-emerald-400/60 hover:bg-emerald-400/5"
+      className="flex w-full items-center gap-4 rounded-lg border border-line bg-panel p-4 text-left transition hover:border-emerald-400/60 hover:bg-emerald-400/5"
     >
       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-400">
         <Icon size={22} />
@@ -51,7 +48,7 @@ function SecurityCard({ icon: Icon, title, detail, action, onClick }) {
       <div className="min-w-0 flex-1">
         <p className="font-semibold text-white">{title}</p>
         <p className="mt-1 text-xs text-slate-400">{detail}</p>
-        <span className="mt-2 inline-flex rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold text-emerald-300">เปิดใช้งานแล้ว</span>
+        <span className={`mt-2 inline-flex rounded-full px-2 py-1 text-[10px] font-semibold ${ready ? "bg-emerald-400/10 text-emerald-300" : "bg-slate-700/50 text-slate-400"}`}>{ready ? "เปิดใช้งานแล้ว" : "ยังไม่เชื่อมต่อ"}</span>
       </div>
       <ChevronRight size={18} className="shrink-0 text-slate-500" />
     </button>
@@ -71,6 +68,18 @@ export default function Access({ user, onBack, onLogout, onUserUpdated, onNaviga
   const [passwords, setPasswords] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [activity, setActivity] = useState([]);
+  const [showFaceEnrollment, setShowFaceEnrollment] = useState(false);
+  const [faceSamples, setFaceSamples] = useState([]);
+  const [facePassword, setFacePassword] = useState("");
+  const [faceSaving, setFaceSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/logs`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("โหลดประวัติไม่สำเร็จ")))
+      .then(setActivity)
+      .catch((requestError) => console.error("โหลดประวัติการทำรายการไม่สำเร็จ", requestError));
+  }, []);
 
   const request = async (path, options = {}) => {
     let response;
@@ -130,6 +139,38 @@ export default function Access({ user, onBack, onLogout, onUserUpdated, onNaviga
     } catch (requestError) { setError(requestError.message); }
   };
 
+  const saveFaceEnrollment = async () => {
+    if (faceSamples.length < 3 || !facePassword) return;
+    setFaceSaving(true);
+    try {
+      const descriptor = faceSamples[0].map((_, index) => faceSamples.reduce((sum, sample) => sum + sample[index], 0) / faceSamples.length);
+      const data = await request(`/users/${user.id}/face`, { method: "PUT", body: JSON.stringify({ password: facePassword, descriptor }) });
+      onUserUpdated(data.user);
+      setShowFaceEnrollment(false);
+      setFaceSamples([]);
+      setFacePassword("");
+      setMessage(data.message);
+      setError("");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setFaceSaving(false);
+    }
+  };
+
+  const removeFaceEnrollment = async () => {
+    const password = window.prompt("กรอกรหัสผ่านเพื่อยืนยันการลบข้อมูลใบหน้า");
+    if (!password) return;
+    try {
+      const data = await request(`/users/${user.id}/face`, { method: "DELETE", body: JSON.stringify({ password }) });
+      onUserUpdated(data.user);
+      setMessage(data.message);
+      setError("");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
   const selectProfileImage = (event) => {
     const [file] = event.target.files;
     if (!file) return;
@@ -154,22 +195,22 @@ export default function Access({ user, onBack, onLogout, onUserUpdated, onNaviga
   };
 
   return (
-    <div className="min-h-screen bg-[#061522] text-slate-100">
-      <header className="flex h-14 items-center justify-between border-b border-cyan-900/50 bg-[#061522] px-5">
+    <div className="min-h-screen bg-base text-slate-100">
+      <header className="flex h-14 items-center justify-between border-b border-line bg-base px-5">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-400/10 text-emerald-400"><ShieldCheck size={22} /></div>
           <h1 className="text-base font-bold tracking-wide md:text-lg">SMART STORAGE SYSTEM</h1>
           <span className="hidden rounded-full border border-emerald-400/40 px-3 py-1 text-[10px] font-semibold text-emerald-300 sm:block">ONLINE</span>
         </div>
         <div className="flex items-center gap-3 text-xs text-slate-300">
-          <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-cyan-500/20 text-cyan-300">
+          <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-neon/15 text-neon">
             {profileImage ? <img src={profileImage} alt="รูปโปรไฟล์" className="h-full w-full object-cover" /> : <UserRound size={16} />}
           </div>
           <span className="hidden sm:block">{displayName}</span>
         </div>
       </header>
       <div className="flex min-h-[calc(100vh-3.5rem)]">
-        <aside className="hidden w-48 shrink-0 border-r border-cyan-950/70 bg-[#061725] py-4 md:block">
+        <aside className="hidden w-48 shrink-0 border-r border-line bg-panel py-4 md:block">
           <nav className="space-y-1 px-2">
             {menu.map(({ key, label, icon: Icon, active, badge }) => (
               <button
@@ -182,7 +223,7 @@ export default function Access({ user, onBack, onLogout, onUserUpdated, onNaviga
               </button>
             ))}
           </nav>
-          <button onClick={onLogout} className="mt-[min(48vh,27rem)] flex w-full items-center gap-3 border-t border-cyan-950/70 px-5 py-4 text-xs text-slate-400 hover:text-white"><LogOut size={17} /> Logout</button>
+          <button onClick={onLogout} className="mt-[min(48vh,27rem)] flex w-full items-center gap-3 border-t border-line px-5 py-4 text-xs text-slate-400 hover:text-white"><LogOut size={17} /> Logout</button>
         </aside>
         <main className="min-w-0 flex-1 p-4 lg:p-6">
           <div className="mb-5">
@@ -193,7 +234,7 @@ export default function Access({ user, onBack, onLogout, onUserUpdated, onNaviga
           {(message || error) && <p className={`mb-4 rounded-lg border px-4 py-3 text-sm ${error ? "border-red-400/40 bg-red-400/10 text-red-300" : "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"}`}>{error || message}</p>}
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
             <section className="space-y-5">
-              <div className="rounded-xl border border-cyan-900/70 bg-[#0a1d2d] p-5">
+              <div className="rounded-xl border border-line bg-panel p-5">
                 <div className="flex flex-wrap items-center gap-4 border-b border-slate-700/70 pb-5">
                   <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl bg-emerald-400/10 text-emerald-400">{profileImage ? <img src={profileImage} alt="รูปโปรไฟล์" className="h-full w-full object-cover" /> : <UserRound size={42} />}<label className="absolute inset-x-0 bottom-0 flex cursor-pointer justify-center bg-black/60 py-1 text-white"><Camera size={14} /><input type="file" accept="image/*" onChange={selectProfileImage} className="hidden" /></label></div>
                   <div className="flex-1"><h3 className="text-xl font-bold">{displayName}</h3><p className="mt-1 text-sm text-slate-400">@{username}</p><span className="mt-3 inline-flex items-center gap-1 rounded-full bg-emerald-400/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> ออนไลน์</span></div>
@@ -203,12 +244,12 @@ export default function Access({ user, onBack, onLogout, onUserUpdated, onNaviga
                 <div className="grid gap-3 pt-5 sm:grid-cols-3">
                   <div className="rounded-lg border border-slate-700/70 bg-[#071625] p-3"><p className="text-[10px] text-slate-500">ชื่อผู้ใช้</p><p className="mt-1 text-sm font-semibold">{username}</p></div>
                   <div className="rounded-lg border border-slate-700/70 bg-[#071625] p-3"><p className="text-[10px] text-slate-500">อีเมล</p><p className="truncate text-sm font-semibold">{user?.email || "ยังไม่ได้เพิ่มอีเมล"}</p></div>
-                  <div className="rounded-lg border border-slate-700/70 bg-[#071625] p-3"><p className="text-[10px] text-slate-500">เข้าใช้ล่าสุด</p><p className="mt-1 text-sm font-semibold">วันนี้ 20:15 น.</p></div>
+                  <div className="rounded-lg border border-slate-700/70 bg-[#071625] p-3"><p className="text-[10px] text-slate-500">สถานะอีเมล</p><p className="mt-1 text-sm font-semibold">{user?.emailVerified ? "ยืนยันแล้ว" : "ยังไม่ได้ยืนยัน"}</p></div>
                 </div>
               </div>
-              <div className="rounded-xl border border-cyan-900/70 bg-[#0a1d2d] p-5"><h3 className="mb-4 text-base font-bold">การรักษาความปลอดภัย</h3><div className="grid gap-3 md:grid-cols-2"><SecurityCard icon={Mail} title="ยืนยันอีเมล" detail={user?.emailVerified ? "อีเมลของคุณยืนยันแล้ว" : "ส่งรหัสยืนยันไปที่อีเมล"} onClick={() => !user?.emailVerified && setShowEmailVerification(true)} />{!user?.emailVerified && showEmailVerification && <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-4 md:col-span-2"><p className="font-semibold text-amber-200">ยืนยันอีเมล</p><p className="mt-1 text-xs text-slate-400">กรอกรหัส 6 หลักที่ส่งไปยัง {user?.email}</p><div className="mt-3 flex flex-wrap gap-2"><input value={emailCode} onChange={(event) => setEmailCode(event.target.value)} inputMode="numeric" maxLength={6} className="input min-w-[180px] flex-1" placeholder="รหัสยืนยัน 6 หลัก" /><button onClick={verifyEmail} className="rounded-lg bg-amber-400 px-4 text-sm font-bold text-slate-950">ยืนยัน</button></div><button onClick={resendEmail} className="mt-3 text-xs font-semibold text-amber-300 underline hover:text-amber-200">ส่งรหัสอีกครั้ง</button></div>}<SecurityCard icon={ShieldCheck} title="ยืนยันตัวตนสองชั้น (2FA)" detail="เพิ่มความปลอดภัยให้บัญชีของคุณ" /><SecurityCard icon={ScanFace} title="สแกนใบหน้า" detail="ใช้ใบหน้าเพื่อยืนยันการเข้าสู่ระบบ" /><SecurityCard icon={KeyRound} title="เปลี่ยนรหัสผ่าน" detail="อัปเดตรหัสผ่านบัญชีของคุณ" onClick={() => setShowPasswordForm((current) => !current)} />{showPasswordForm && <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-4 md:col-span-2"><div className="grid gap-3 sm:grid-cols-3"><input type="password" value={passwords.currentPassword} onChange={(event) => setPasswords((current) => ({ ...current, currentPassword: event.target.value }))} className="input" placeholder="รหัสผ่านเดิม" /><input type="password" value={passwords.newPassword} onChange={(event) => setPasswords((current) => ({ ...current, newPassword: event.target.value }))} className="input" placeholder="รหัสผ่านใหม่" /><input type="password" value={passwords.confirmPassword} onChange={(event) => setPasswords((current) => ({ ...current, confirmPassword: event.target.value }))} className="input" placeholder="ยืนยันรหัสผ่านใหม่" /></div><button onClick={changePassword} className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-400 px-4 py-2 text-sm font-bold text-slate-950"><CheckCircle2 size={16} /> เปลี่ยนรหัสผ่าน</button></div>}</div></div>
+              <div className="rounded-xl border border-line bg-panel p-5"><h3 className="mb-4 text-base font-bold">การรักษาความปลอดภัย</h3><div className="grid gap-3 md:grid-cols-2"><SecurityCard icon={Mail} title="ยืนยันอีเมล" detail={user?.emailVerified ? "อีเมลของคุณยืนยันแล้ว" : "ส่งรหัสยืนยันไปที่อีเมล"} ready={user?.emailVerified} onClick={() => !user?.emailVerified && setShowEmailVerification(true)} />{!user?.emailVerified && showEmailVerification && <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-4 md:col-span-2"><p className="font-semibold text-amber-200">ยืนยันอีเมล</p><p className="mt-1 text-xs text-slate-400">กรอกรหัส 6 หลักที่ส่งไปยัง {user?.email}</p><div className="mt-3 flex flex-wrap gap-2"><input value={emailCode} onChange={(event) => setEmailCode(event.target.value)} inputMode="numeric" maxLength={6} className="input min-w-[180px] flex-1" placeholder="รหัสยืนยัน 6 หลัก" /><button onClick={verifyEmail} className="rounded-lg bg-amber-400 px-4 text-sm font-bold text-slate-950">ยืนยัน</button></div><button onClick={resendEmail} className="mt-3 text-xs font-semibold text-amber-300 underline hover:text-amber-200">ส่งรหัสอีกครั้ง</button></div>}<SecurityCard icon={ShieldCheck} title="ยืนยันตัวตนสองชั้น (2FA)" detail="ยังไม่ได้เชื่อมต่อ" /><SecurityCard icon={ScanFace} title={user?.faceEnrolled ? "ข้อมูลใบหน้า" : "ลงทะเบียนใบหน้า"} detail={user?.faceEnrolled ? "ลงทะเบียนใบหน้าแล้ว" : user?.emailVerified ? "ใช้กล้องเพื่อบันทึกตัวอย่างใบหน้า 3 ครั้ง" : "กรุณายืนยันอีเมลก่อนลงทะเบียน"} ready={user?.faceEnrolled} onClick={() => { setFaceSamples([]); setShowFaceEnrollment((current) => !current); }} /><SecurityCard icon={KeyRound} title="เปลี่ยนรหัสผ่าน" detail="อัปเดตรหัสผ่านบัญชีของคุณ" ready onClick={() => setShowPasswordForm((current) => !current)} />{showFaceEnrollment && <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-4 md:col-span-2"><div className="mb-4"><h4 className="font-semibold">ลงทะเบียนใบหน้า</h4><p className="mt-1 text-xs text-slate-400">ตัวอย่าง {faceSamples.length}/3 · ใช้กล้องจับ descriptor ในเครื่อง โดยไม่เก็บภาพใบหน้า</p></div>{user?.emailVerified ? <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_260px]"><FaceCamera onCapture={(descriptor) => setFaceSamples((current) => current.length < 3 ? [...current, descriptor] : current)} captureLabel={faceSamples.length < 3 ? `บันทึกตัวอย่าง ${faceSamples.length + 1}/3` : "ครบ 3 ตัวอย่างแล้ว"} /><div className="min-w-0"><label className="block text-xs text-slate-300">ยืนยันด้วยรหัสผ่าน<input type="password" value={facePassword} onChange={(event) => setFacePassword(event.target.value)} className="input mt-2" autoComplete="current-password" /></label><button onClick={saveFaceEnrollment} disabled={faceSamples.length < 3 || !facePassword || faceSaving} className="mt-3 w-full rounded-lg bg-neon px-4 py-3 text-sm font-bold text-slate-950 disabled:opacity-40">{faceSaving ? "กำลังบันทึก..." : "ยืนยันและบันทึกใบหน้า"}</button>{user?.faceEnrolled && <button onClick={removeFaceEnrollment} className="mt-3 w-full rounded-lg border border-red-500/40 px-4 py-2 text-sm text-red-300">ลบข้อมูลใบหน้า</button>}</div></div> : <p className="rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-sm text-amber-200">ต้องยืนยันอีเมลก่อนลงทะเบียนใบหน้า</p>}</div>}{showPasswordForm && <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-4 md:col-span-2"><div className="grid gap-3 sm:grid-cols-3"><input type="password" value={passwords.currentPassword} onChange={(event) => setPasswords((current) => ({ ...current, currentPassword: event.target.value }))} className="input" placeholder="รหัสผ่านเดิม" /><input type="password" value={passwords.newPassword} onChange={(event) => setPasswords((current) => ({ ...current, newPassword: event.target.value }))} className="input" placeholder="รหัสผ่านใหม่" /><input type="password" value={passwords.confirmPassword} onChange={(event) => setPasswords((current) => ({ ...current, confirmPassword: event.target.value }))} className="input" placeholder="ยืนยันรหัสผ่านใหม่" /></div><button onClick={changePassword} className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-400 px-4 py-2 text-sm font-bold text-slate-950"><CheckCircle2 size={16} /> เปลี่ยนรหัสผ่าน</button></div>}</div></div>
             </section>
-            <aside className="h-fit rounded-xl border border-cyan-900/70 bg-[#0a1d2d] p-5"><div className="mb-4 flex items-center justify-between"><h3 className="font-bold">ประวัติการเข้าใช้งาน</h3><span className="text-[10px] text-slate-500">ล่าสุด</span></div><div className="space-y-4">{accessHistory.map((entry) => <div key={`${entry.time}-${entry.method}`} className="flex gap-3 border-b border-slate-700/70 pb-4 last:border-0 last:pb-0"><div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-400/10 text-emerald-400"><ShieldCheck size={15} /></div><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{entry.method}</p><p className="mt-1 text-[11px] text-slate-500">{entry.device}</p><p className="mt-1 text-[10px] text-slate-600">{entry.time}</p></div><span className="text-[10px] font-semibold text-emerald-300">{entry.status}</span></div>)}</div></aside>
+            <aside className="h-fit rounded-xl border border-line bg-panel p-5"><div className="mb-4 flex items-center justify-between"><h3 className="font-bold">ประวัติการทำรายการ</h3><span className="text-[10px] text-slate-500">ล่าสุด · เวลาไทย</span></div><div className="space-y-4">{activity.slice(0, 8).map((entry) => <div key={entry.id} className="flex gap-3 border-b border-slate-700/70 pb-4 last:border-0 last:pb-0"><div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-400/10 text-emerald-400"><ShieldCheck size={15} /></div><div className="min-w-0 flex-1"><p className="text-sm font-semibold">{entry.action}</p><p className="mt-1 text-[11px] text-slate-500">{entry.user || "ระบบ"}</p><p className="mt-1 text-[10px] text-slate-600">{formatBangkokDateTime(entry.time)}</p></div></div>)}{!activity.length && <p className="text-xs text-slate-500">ยังไม่มีประวัติการทำรายการ</p>}</div></aside>
           </div>
         </main>
       </div>

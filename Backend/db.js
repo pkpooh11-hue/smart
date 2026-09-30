@@ -63,6 +63,7 @@ export const initializeDatabase = async () => {
     ["email_verified", "INTEGER NOT NULL DEFAULT 0"],
     ["email_verification_code", "TEXT DEFAULT ''"],
     ["profile_image", "TEXT DEFAULT ''"],
+    ["face_descriptor", "TEXT"],
   ];
   for (const [name, definition] of missingUserColumns) {
     if (!userColumns.some((column) => column.name === name)) {
@@ -78,6 +79,16 @@ export const initializeDatabase = async () => {
     note TEXT DEFAULT '',
     items TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS access_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user TEXT NOT NULL,
+    order_id INTEGER NOT NULL,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    completed_at DATETIME
   )`);
 
   const orderColumns = await all("PRAGMA table_info(orders)");

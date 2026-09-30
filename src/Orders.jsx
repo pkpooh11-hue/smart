@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { formatBangkokClock, formatBangkokDate, formatBangkokDateTime } from "./time";
 import {
   Bell,
   CalendarDays,
@@ -20,7 +21,8 @@ import {
   UserRound,
 } from "lucide-react";
 
-const API = "/api/orders";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://fewer-hit-amy-watershed.trycloudflare.com";
+const API = `${API_BASE}/api/orders`;
 const PICKUP_TIMEOUT_MS = 15 * 60 * 1000;
 const statusMeta = {
   Pending: {
@@ -30,7 +32,7 @@ const statusMeta = {
   },
   "In-Progress": {
     label: "In-Progress",
-    className: "bg-blue-500/20 text-blue-300 border-blue-500/40",
+    className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40",
     icon: Clock3,
   },
   Completed: {
@@ -46,13 +48,13 @@ const statusMeta = {
 };
 const orderCardStatusClass = {
   Pending: "border-amber-500/70 bg-amber-500/10 hover:border-amber-400",
-  "In-Progress": "border-blue-500/70 bg-blue-500/10 hover:border-blue-400",
+  "In-Progress": "border-emerald-500/50 bg-emerald-500/5 hover:border-emerald-400",
   Completed: "border-emerald-500/70 bg-emerald-500/10 hover:border-emerald-400",
   Cancelled: "border-red-500/70 bg-red-500/10 hover:border-red-400",
 };
 const orderIconStatusClass = {
   Pending: "bg-amber-500/20 text-amber-300",
-  "In-Progress": "bg-blue-500/20 text-blue-300",
+  "In-Progress": "bg-emerald-500/15 text-emerald-300",
   Completed: "bg-emerald-500/20 text-emerald-300",
   Cancelled: "bg-red-500/20 text-red-300",
 };
@@ -79,20 +81,6 @@ function StatusBadge({ status }) {
       {meta.label}
     </span>
   );
-}
-
-function formatOrderDate(value) {
-  if (!value) return "-";
-  const normalized = value.includes("Z")
-    ? value
-    : `${value.replace(" ", "T")}Z`;
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) return value;
-  return `${date.toLocaleDateString("th-TH", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  })} เวลา ${date.toLocaleTimeString("th-TH", { hour12: false })}`;
 }
 
 export default function Orders({ user, onBack, onNavigate }) {
@@ -162,8 +150,8 @@ export default function Orders({ user, onBack, onNavigate }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#061321] text-slate-100">
-      <header className="flex h-14 items-center justify-between border-b border-cyan-900/50 bg-[#061522] px-5">
+    <div className="min-h-screen bg-base text-slate-100">
+      <header className="flex h-14 items-center justify-between border-b border-line bg-base px-5">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
             <ClipboardList size={22} />
@@ -179,9 +167,9 @@ export default function Orders({ user, onBack, onNavigate }) {
         <div className="flex items-center gap-4 text-xs text-slate-300">
           <div className="hidden text-right sm:block">
             <p className="font-mono text-sm">
-              {time.toLocaleTimeString("th-TH")}
+              {formatBangkokClock(time)}
             </p>
-            <p className="text-[10px] text-slate-500">21 พ.ค. 2025</p>
+            <p className="text-[10px] text-slate-500">{formatBangkokDate(time)}</p>
           </div>
           <Bell size={17} />
           <div className="hidden items-center gap-2 border-l border-slate-700 pl-4 sm:flex">
@@ -193,7 +181,7 @@ export default function Orders({ user, onBack, onNavigate }) {
         </div>
       </header>
       <div className="flex min-h-[calc(100vh-3.5rem)]">
-        <aside className="hidden w-36 shrink-0 border-r border-cyan-950/70 bg-[#061725] py-4 md:block lg:w-44">
+        <aside className="hidden w-36 shrink-0 border-r border-line bg-panel py-4 md:block lg:w-44">
           <nav className="space-y-1 px-2">
             {menu.map(({ label, icon: Icon, active, badge }) => (
               <button
@@ -213,7 +201,7 @@ export default function Orders({ user, onBack, onNavigate }) {
               </button>
             ))}
           </nav>
-          <button className="mt-[min(48vh,27rem)] flex w-full items-center gap-3 border-t border-cyan-950/70 px-5 py-4 text-xs text-slate-400">
+          <button className="mt-[min(48vh,27rem)] flex w-full items-center gap-3 border-t border-line px-5 py-4 text-xs text-slate-400">
             <LogOut size={17} /> Logout
           </button>
         </aside>
@@ -274,7 +262,7 @@ export default function Orders({ user, onBack, onNavigate }) {
                   <button
                     key={order.id}
                     onClick={() => setSelected(order)}
-                    className={`w-full rounded-lg border p-3 text-left transition ${orderCardStatusClass[order.status] || "border-slate-700/70 bg-[#0d2235] hover:border-cyan-500/50"} ${selected?.id === order.id ? "ring-1 ring-white/70" : ""}`}
+                    className={`w-full rounded-lg border p-3 text-left transition ${orderCardStatusClass[order.status] || "border-slate-700/70 bg-panel hover:border-neon/50"} ${selected?.id === order.id ? "ring-1 ring-neon/70" : ""}`}
                   >
                     <div className="flex items-center gap-3">
                       <div
@@ -285,10 +273,10 @@ export default function Orders({ user, onBack, onNavigate }) {
                       <div className="min-w-0 flex-1">
                         <p className="font-semibold">{order.order_no}</p>
                         <p className="mt-1 flex items-center gap-2 text-[11px] text-slate-300">
-                          <CalendarDays size={13} className="shrink-0 text-cyan-300" />{" "}
+                          <CalendarDays size={13} className="shrink-0 text-emerald-300" />{" "}
                           <span>
                             <span className="font-semibold text-slate-400">วันที่/เวลาที่เบิก:</span>{" "}
-                            <span className="font-semibold text-slate-200">{formatOrderDate(order.created_at)}</span>
+                            <span className="font-semibold text-slate-200">{formatBangkokDateTime(order.created_at)}</span>
                           </span>{" "}
                           <span>•</span> {order.items.length} รายการ
                         </p>
@@ -337,7 +325,7 @@ export default function Orders({ user, onBack, onNavigate }) {
                         <p className="font-bold">{selected.order_no}</p>
                         <p className="mt-1 text-[10px] text-slate-500">
                           <CalendarDays size={11} className="mr-1 inline" />
-                          วันที่/เวลาที่เบิก: {formatOrderDate(selected.created_at)}
+                          วันที่/เวลาที่เบิก: {formatBangkokDateTime(selected.created_at)}
                         </p>
                       </div>
                       <StatusBadge status={selected.status} />
@@ -378,11 +366,12 @@ export default function Orders({ user, onBack, onNavigate }) {
                             {item.name}
                           </p>
                           <p className="text-[10px] text-slate-500">
-                            SKU: {item.sku || "-"}
+                            SKU: {item.sku || "-"} · เบิกแล้ว {Number(item.picked_quantity ?? item.requested_quantity)} / {item.requested_quantity} · คืนแล้ว {Number(item.returned_quantity || 0)}
                           </p>
                         </div>
-                        <span className="text-xs font-bold text-emerald-300">
-                          {item.requested_quantity} {item.unit}
+                        <span className="text-right text-xs font-bold text-emerald-300">
+                          {Math.max(0, Number(item.picked_quantity ?? item.requested_quantity) - Number(item.returned_quantity || 0))} ค้างคืน
+                          <span className="block font-normal text-slate-500">จาก {item.requested_quantity} {item.unit}</span>
                         </span>
                       </div>
                     ))}
@@ -397,7 +386,7 @@ export default function Orders({ user, onBack, onNavigate }) {
                     selected.status !== "Cancelled" && (
                       <button
                         onClick={() => updateStatus("Completed")}
-                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-3 text-sm font-bold hover:bg-blue-500"
+                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-neon py-3 text-sm font-bold text-slate-950 hover:bg-emerald-300"
                       >
                         <CheckCircle2 size={17} /> ดำเนินการเสร็จสิ้น
                       </button>

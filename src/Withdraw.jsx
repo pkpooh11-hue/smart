@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { formatBangkokClock, formatBangkokDate } from "./time";
 import {
   Bell,
   ClipboardList,
@@ -22,8 +23,9 @@ import {
   UserRound,
 } from "lucide-react";
 
-const API = "/api/inventory";
-const WITHDRAW_API = "/api/inventory/withdraw";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://fewer-hit-amy-watershed.trycloudflare.com";
+const API = `${API_BASE}/api/inventory`;
+const WITHDRAW_API = `${API_BASE}/api/inventory/withdraw`;
 
 const menu = [
   { label: "Dashboard", icon: LayoutDashboard },
@@ -41,10 +43,7 @@ const menu = [
 const statusFor = (item) => {
   if (Number(item.quantity) <= 0)
     return { label: "หมด", color: "bg-red-500/20 text-red-400" };
-  if (
-    Number(item.quantity) <=
-    Number(item.initial_quantity || item.quantity) * 0.5
-  )
+  if (Number(item.quantity) <= Number(item.min_qty || 0))
     return { label: "ใกล้หมด", color: "bg-amber-400 text-slate-950" };
   return { label: "ปกติ", color: "bg-emerald-500/20 text-emerald-300" };
 };
@@ -53,10 +52,10 @@ function ProductCard({ item, count, onAdd, onChange }) {
   const status = statusFor(item);
   const unavailable = Number(item.quantity) <= 0;
   return (
-    <article className="group flex min-h-[400px] flex-col overflow-hidden rounded-2xl border border-slate-700/80 bg-gradient-to-b from-[#142d43] via-[#0e2336] to-[#091a2b] shadow-lg shadow-black/20 transition duration-300 hover:-translate-y-1.5 hover:border-blue-400/70 hover:shadow-[0_12px_35px_rgba(37,99,235,0.22)]">
-      <div className="relative flex w-full shrink-0 items-center justify-center overflow-hidden border-b border-blue-400/10 bg-[#14283a]" style={{ height: 178, minHeight: 178, maxHeight: 178 }}>
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.18),transparent_65%)]" />
-        <div className="absolute -right-8 -top-10 h-28 w-28 rounded-full border border-blue-300/10 transition duration-500 group-hover:scale-150" />
+    <article className="group flex min-h-[400px] flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-lg shadow-black/20 transition duration-300 hover:-translate-y-1 hover:border-neon/60 hover:shadow-[0_12px_35px_rgba(34,197,94,0.14)]">
+      <div className="relative flex w-full shrink-0 items-center justify-center overflow-hidden border-b border-line bg-[#101816]" style={{ height: 178, minHeight: 178, maxHeight: 178 }}>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(34,197,94,0.12),transparent_65%)]" />
+        <div className="absolute -right-8 -top-10 h-28 w-28 rounded-full border border-emerald-300/10 transition duration-500 group-hover:scale-150" />
         {item.image_url ? (
           <img
             src={item.image_url}
@@ -98,7 +97,7 @@ function ProductCard({ item, count, onAdd, onChange }) {
         <button
           disabled={unavailable}
           onClick={onAdd}
-          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-3 text-sm font-bold shadow-md shadow-blue-950/30 transition hover:bg-blue-500 hover:shadow-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-neon py-3 text-sm font-bold text-slate-950 shadow-md shadow-emerald-950/30 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-500"
         >
           <ShoppingCart size={17} /> เพิ่มเข้าตะกร้า
         </button>
@@ -189,10 +188,10 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#061321] text-slate-100">
-      <header className="flex h-14 items-center justify-between border-b border-cyan-900/50 bg-[#061522] px-5">
+    <div className="min-h-screen bg-base text-slate-100">
+      <header className="flex h-14 items-center justify-between border-b border-line bg-base px-5">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/20 text-blue-400">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-neon/15 text-neon">
             <Package size={22} />
           </div>
           <h1 className="text-base font-bold tracking-wide md:text-lg">
@@ -202,9 +201,9 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
         <div className="flex items-center gap-4 text-xs text-slate-300">
           <div className="hidden text-right sm:block">
             <p className="font-mono text-sm">
-              {time.toLocaleTimeString("th-TH")}
+              {formatBangkokClock(time)}
             </p>
-            <p className="text-[10px] text-slate-500">21 พ.ค. 2025</p>
+            <p className="text-[10px] text-slate-500">{formatBangkokDate(time)}</p>
           </div>
           <Bell size={17} />
           <div className="hidden items-center gap-2 border-l border-slate-700 pl-4 sm:flex">
@@ -217,7 +216,7 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
         </div>
       </header>
       <div className="flex min-h-[calc(100vh-3.5rem)]">
-        <aside className="hidden w-36 shrink-0 border-r border-cyan-950/70 bg-[#061725] py-4 md:block lg:w-44">
+        <aside className="hidden w-36 shrink-0 border-r border-line bg-panel py-4 md:block lg:w-44">
           <nav className="space-y-1 px-2">
             {menu.map(({ label, icon: Icon, badge, active }) => (
               <button
@@ -226,7 +225,7 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
                   const destinations = { Dashboard: "dashboard", Access: "access", Inventory: "inventory", "เบิกสินค้า": "withdraw", Orders: "orders" };
                   onNavigate?.(destinations[label]);
                 }}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs transition ${active ? "bg-blue-600/50 text-white" : "text-slate-400 hover:bg-white/5 hover:text-white"}`}
+                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs transition ${active ? "bg-neon/10 text-neon" : "text-slate-400 hover:bg-white/5 hover:text-white"}`}
               >
                 <Icon size={17} />
                 <span className="flex-1">{label}</span>
@@ -238,19 +237,19 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
               </button>
             ))}
           </nav>
-          <button className="mt-[min(48vh,27rem)] flex w-full items-center gap-3 border-t border-cyan-950/70 px-5 py-4 text-xs text-slate-400">
+          <button className="mt-[min(48vh,27rem)] flex w-full items-center gap-3 border-t border-line px-5 py-4 text-xs text-slate-400">
             <LogOut size={17} /> Logout
           </button>
         </aside>
         <main className="min-w-0 flex-1 p-4 lg:p-5">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <ShoppingCart className="text-blue-400" size={25} />
+              <ShoppingCart className="text-neon" size={25} />
               <h2 className="text-2xl font-bold">เบิกสินค้า</h2>
             </div>
-            <button disabled={!cartCount} className="flex items-center gap-2 rounded-lg border border-blue-500 bg-blue-600/20 px-4 py-2 text-xs text-blue-200 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50">
+            <button disabled={!cartCount} className="flex items-center gap-2 rounded-lg border border-emerald-500 bg-neon/10 px-4 py-2 text-xs text-emerald-200 transition hover:bg-neon/20 disabled:cursor-not-allowed disabled:opacity-50">
               <ShoppingCart size={16} /> ตะกร้าสินค้า{" "}
-              <span className="rounded-full bg-blue-500 px-2 py-0.5 text-white">
+              <span className="rounded-full bg-neon px-2 py-0.5 text-slate-950">
                 {cartCount}
               </span>
             </button>
@@ -267,7 +266,7 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="ค้นหาสินค้า..."
-                    className="w-full rounded-md border border-slate-700 bg-[#071625] py-2 pl-9 text-xs text-white outline-none focus:border-blue-500"
+                    className="w-full rounded-md border border-slate-700 bg-[#071625] py-2 pl-9 text-xs text-white outline-none focus:border-neon"
                   />
                 </div>
                 <select
@@ -338,7 +337,7 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
                       <p className="truncate text-xs font-semibold">
                         {item.name}
                       </p>
-                      <p className="text-[10px] text-blue-400">
+                      <p className="text-[10px] text-emerald-400">
                         จำนวนคงเหลือ {item.quantity}
                       </p>
                     </div>
@@ -390,7 +389,7 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
                   value={note}
                   onChange={(event) => setNote(event.target.value)}
                   placeholder="ระบุหมายเหตุ..."
-                  className="mt-2 h-16 w-full rounded-md border border-slate-600 bg-[#071625] p-2 text-xs text-white outline-none focus:border-blue-500"
+                  className="mt-2 h-16 w-full rounded-md border border-slate-600 bg-[#071625] p-2 text-xs text-white outline-none focus:border-neon"
                 />
               </div>
               <button

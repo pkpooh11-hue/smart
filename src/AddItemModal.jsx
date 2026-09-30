@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { Minus, Package, Plus, X } from "lucide-react";
 
-const API = "/api/inventory";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://fewer-hit-amy-watershed.trycloudflare.com";
+const API = `${API_BASE}/api/inventory`;
 const CATEGORIES = [
   "อุปกรณ์ช่าง",
   "บรรจุภัณฑ์",

@@ -49,7 +49,14 @@ const publicUser = (user) => ({
   email: user.email || "",
   emailVerified: Boolean(user.email_verified),
   profileImage: user.profile_image || "",
+  faceEnrolled: Boolean(user.face_descriptor),
 });
+
+const normalizeFaceDescriptor = (descriptor) => {
+  if (!Array.isArray(descriptor) || descriptor.length !== 128) return null;
+  if (!descriptor.every((value) => Number.isFinite(value) && value >= -1 && value <= 1)) return null;
+  return descriptor;
+};
 
 const sendVerificationEmail = async (email, code) => {
   if (!process.env.SMTP_HOST || !process.env.SMTP_FROM) {
@@ -91,18 +98,24 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     const existingUsers = await all('SELECT id FROM users WHERE username = ? OR email = ?', [username.trim(), email.trim().toLowerCase()]);
     if (existingUsers[0]) return res.status(409).json({ error: 'ชื่อผู้ใช้หรืออีเมลนี้มีอยู่แล้ว' });
-    const verificationCode = String(crypto.randomInt(100000, 1000000));
+    const smtpConfigured = Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM);
+    const verificationCode = smtpConfigured ? String(crypto.randomInt(100000, 1000000)) : '';
     const result = await run(
-      'INSERT INTO users (username, full_name, email, password_hash, email_verification_code) VALUES (?, ?, ?, ?, ?)',
-      [username.trim(), fullName.trim(), email.trim().toLowerCase(), hashPassword(password), verificationCode],
+      'INSERT INTO users (username, full_name, email, password_hash, email_verified, email_verification_code) VALUES (?, ?, ?, ?, ?, ?)',
+      [username.trim(), fullName.trim(), email.trim().toLowerCase(), hashPassword(password), smtpConfigured ? 0 : 1, verificationCode],
     );
-    try {
-      await sendVerificationEmail(email.trim().toLowerCase(), verificationCode);
-    } catch (mailError) {
-      await run('DELETE FROM users WHERE id = ?', [result.lastID]);
-      return res.status(503).json({ error: mailError.message });
+    if (smtpConfigured) {
+      try {
+        await sendVerificationEmail(email.trim().toLowerCase(), verificationCode);
+      } catch (mailError) {
+        await run('DELETE FROM users WHERE id = ?', [result.lastID]);
+        return res.status(503).json({ error: mailError.message });
+      }
     }
-    res.status(201).json({ message: 'สมัครสมาชิกสำเร็จ กรุณาตรวจสอบอีเมล', user: { id: result.lastID, username: username.trim(), fullName: fullName.trim(), email: email.trim().toLowerCase(), emailVerified: false, profileImage: '' } });
+    res.status(201).json({
+      message: smtpConfigured ? 'สมัครสมาชิกสำเร็จ กรุณาตรวจสอบอีเมล' : 'สมัครสมาชิกสำเร็จ สามารถเข้าสู่ระบบได้เลย',
+      user: { id: result.lastID, username: username.trim(), fullName: fullName.trim(), email: email.trim().toLowerCase(), emailVerified: !smtpConfigured, profileImage: '' },
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -117,6 +130,62 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
     }
     res.json({ user: publicUser(users[0]) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/auth/users/:id/face', async (req, res) => {
+  const { password, descriptor } = req.body;
+  const normalizedDescriptor = normalizeFaceDescriptor(descriptor);
+  if (!password || !normalizedDescriptor) return res.status(400).json({ error: 'ข้อมูลใบหน้าไม่ถูกต้อง หรือไม่ได้ยืนยันรหัสผ่าน' });
+  try {
+    const users = await all('SELECT * FROM users WHERE id = ?', [req.params.id]);
+    if (!users[0] || !verifyPassword(password, users[0].password_hash)) return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
+    if (!users[0].email_verified) return res.status(403).json({ error: 'กรุณายืนยันอีเมลก่อนลงทะเบียนใบหน้า' });
+    await run('UPDATE users SET face_descriptor = ? WHERE id = ?', [JSON.stringify(normalizedDescriptor), req.params.id]);
+    await run('INSERT INTO logs (user, action) VALUES (?, ?)', [users[0].username, 'ลงทะเบียนข้อมูลใบหน้า']);
+    const updatedUsers = await all('SELECT * FROM users WHERE id = ?', [req.params.id]);
+    res.json({ user: publicUser(updatedUsers[0]), message: 'ลงทะเบียนใบหน้าแล้ว' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/auth/users/:id/face', async (req, res) => {
+  const { password } = req.body;
+  try {
+    const users = await all('SELECT * FROM users WHERE id = ?', [req.params.id]);
+    if (!users[0] || !verifyPassword(password || '', users[0].password_hash)) return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
+    await run('UPDATE users SET face_descriptor = NULL WHERE id = ?', [req.params.id]);
+    await run('INSERT INTO logs (user, action) VALUES (?, ?)', [users[0].username, 'ลบข้อมูลใบหน้า']);
+    res.json({ message: 'ลบข้อมูลใบหน้าแล้ว', user: publicUser({ ...users[0], face_descriptor: null }) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/auth/face/recognize', async (req, res) => {
+  const descriptor = normalizeFaceDescriptor(req.body.descriptor);
+  if (!descriptor) return res.status(400).json({ error: 'ไม่พบข้อมูลใบหน้าที่ถูกต้อง' });
+  try {
+    const users = await all('SELECT id, username, full_name, email, email_verified, profile_image, face_descriptor FROM users WHERE face_descriptor IS NOT NULL AND email_verified = 1');
+    let bestMatch = null;
+    for (const user of users) {
+      const savedDescriptor = JSON.parse(user.face_descriptor);
+      const distance = Math.sqrt(savedDescriptor.reduce((sum, value, index) => sum + (value - descriptor[index]) ** 2, 0));
+      if (distance < 0.5 && (!bestMatch || distance < bestMatch.distance)) bestMatch = { user, distance };
+    }
+    if (!bestMatch) return res.status(404).json({ error: 'ไม่รู้จักใบหน้านี้ หรือยังไม่ได้ลงทะเบียน' });
+    await run('INSERT INTO logs (user, action) VALUES (?, ?)', [bestMatch.user.username, 'ยืนยันตัวตนด้วยใบหน้า (โหมดทดสอบ)']);
+    res.json({
+      user: {
+        id: bestMatch.user.id,
+        username: bestMatch.user.username,
+        fullName: bestMatch.user.full_name,
+      },
+      distance: Number(bestMatch.distance.toFixed(4)),
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -246,6 +315,15 @@ app.get('/api/inventory', async (req, res) => {
   }
 });
 
+app.get('/api/logs', async (req, res) => {
+  try {
+    const logs = await all('SELECT id, user, action, time FROM logs ORDER BY id DESC LIMIT 50');
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // เพิ่มรายการใหม่
 app.post('/api/inventory', async (req, res) => {
   const { name, sku, category, shelf, quantity, unit, description, min_qty, image_url, price } = req.body;
@@ -317,7 +395,12 @@ app.post('/api/inventory/withdraw', async (req, res) => {
 
     const orderNo = `ORD-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
     const orderItems = await all(`SELECT id, name, sku, quantity, unit, image_url FROM inventory WHERE id IN (${items.map(() => '?').join(',')})`, items.map((item) => item.id));
-    const itemsWithRequestedQuantity = orderItems.map((item) => ({ ...item, requested_quantity: items.find((selected) => selected.id === item.id).quantity }));
+    const itemsWithRequestedQuantity = orderItems.map((item) => ({
+      ...item,
+      requested_quantity: Number(items.find((selected) => Number(selected.id) === item.id).quantity),
+      picked_quantity: 0,
+      returned_quantity: 0,
+    }));
     await run(
       "INSERT INTO orders (order_no, user, note, items, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
       [orderNo, user, note, JSON.stringify(itemsWithRequestedQuantity)],
@@ -333,7 +416,154 @@ app.get('/api/orders', async (req, res) => {
   try {
     await expirePendingOrders();
     const orders = await all('SELECT * FROM orders ORDER BY id DESC');
-    res.json(orders.map((order) => ({ ...order, items: JSON.parse(order.items) })));
+    const user = String(req.query.user || '').trim();
+    res.json(orders
+      .filter((order) => !user || order.user === user)
+      .map((order) => ({
+        ...order,
+        items: JSON.parse(order.items).map((item) => ({
+          ...item,
+          picked_quantity: Number(item.picked_quantity ?? item.requested_quantity ?? 0),
+          returned_quantity: Number(item.returned_quantity || 0),
+        })),
+      })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/access/door/authorize', async (req, res) => {
+  const { user, orderId, mode } = req.body;
+  if (!user?.trim() || !['borrow', 'return'].includes(mode) || !Number.isInteger(Number(orderId))) {
+    return res.status(400).json({ error: 'กรุณาระบุบัญชี ประเภทการทำรายการ และออเดอร์' });
+  }
+
+  try {
+    const orders = await all('SELECT * FROM orders WHERE id = ?', [Number(orderId)]);
+    const order = orders[0];
+    if (!order) return res.status(404).json({ error: 'ไม่พบออเดอร์' });
+    if (order.user !== user.trim()) return res.status(403).json({ error: 'ออเดอร์นี้ไม่ได้เป็นของบัญชีที่ยืนยัน' });
+    if (order.status === 'Cancelled') return res.status(400).json({ error: 'ออเดอร์นี้ถูกยกเลิกแล้ว' });
+
+    const items = JSON.parse(order.items);
+    const canProceed = mode === 'borrow'
+      ? items.some((item) => Number(item.picked_quantity ?? 0) < Number(item.requested_quantity ?? 0))
+      : items.some((item) => Number(item.returned_quantity ?? 0) < Number(item.picked_quantity ?? 0));
+    if (!canProceed) return res.status(409).json({ error: 'ออเดอร์นี้ไม่มีรายการที่ทำต่อได้' });
+
+    await run("UPDATE access_sessions SET status = 'expired' WHERE user = ? AND status = 'active'", [user.trim()]);
+    await run('INSERT INTO access_sessions (user, order_id, mode) VALUES (?, ?, ?)', [user.trim(), order.id, mode]);
+    const action = mode === 'borrow' ? 'ยืนยันสิทธิ์เข้ารับสินค้า' : 'ยืนยันสิทธิ์นำสินค้ามาคืน';
+    await run('INSERT INTO logs (user, action) VALUES (?, ?)', [user.trim(), `${action} (${order.order_no}) - ทดสอบ: ไม่มีอุปกรณ์ควบคุมประตู`]);
+    res.json({
+      message: 'ยืนยันออเดอร์แล้ว แต่ยังเปิดประตูจริงไม่ได้เนื่องจากไม่มีอุปกรณ์ควบคุมประตูเชื่อมต่อ',
+      doorOpened: false,
+      orderNo: order.order_no,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/access/room/session', async (req, res) => {
+  const user = String(req.query.user || '').trim();
+  if (!user) return res.status(400).json({ error: 'กรุณาระบุบัญชีผู้ใช้' });
+  try {
+    const sessions = await all("SELECT id, user, order_id AS orderId, mode, created_at AS createdAt FROM access_sessions WHERE user = ? AND status = 'active' ORDER BY id DESC LIMIT 1", [user]);
+    if (!sessions[0]) return res.status(404).json({ error: 'ไม่พบรายการเข้าใช้งานที่รออยู่จากหน้าประตู' });
+    const orders = await all('SELECT order_no AS orderNo FROM orders WHERE id = ? AND user = ?', [sessions[0].orderId, user]);
+    if (!orders[0]) return res.status(404).json({ error: 'ไม่พบออเดอร์ของรายการเข้าใช้งานนี้' });
+    res.json({ session: { ...sessions[0], orderNo: orders[0].orderNo } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/orders/:id/scan', async (req, res) => {
+  const { user, mode, barcode } = req.body;
+  if (!user?.trim() || !['borrow', 'return'].includes(mode) || !String(barcode || '').trim()) {
+    return res.status(400).json({ error: 'กรุณาระบุบัญชี ประเภทการทำรายการ และบาร์โค้ด' });
+  }
+
+  try {
+    const orders = await all('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+    const order = orders[0];
+    if (!order) return res.status(404).json({ error: 'ไม่พบออเดอร์' });
+    if (order.user !== user.trim()) return res.status(403).json({ error: 'ออเดอร์นี้ไม่ได้เป็นของบัญชีที่ยืนยัน' });
+    if (order.status === 'Cancelled') return res.status(400).json({ error: 'ออเดอร์นี้ถูกยกเลิกแล้ว' });
+    const sessions = await all("SELECT id FROM access_sessions WHERE user = ? AND order_id = ? AND mode = ? AND status = 'active' ORDER BY id DESC LIMIT 1", [user.trim(), order.id, mode]);
+    if (!sessions[0]) return res.status(403).json({ error: 'ยังไม่มีรายการเข้าใช้งานที่อนุมัติจากหน้าประตู' });
+
+    const items = JSON.parse(order.items).map((item) => ({
+      ...item,
+      picked_quantity: Number(item.picked_quantity ?? item.requested_quantity ?? 0),
+      returned_quantity: Number(item.returned_quantity || 0),
+    }));
+    const code = String(barcode).trim();
+    const item = items.find((entry) => String(entry.sku || '').trim() === code || String(entry.id) === code);
+    if (!item) return res.status(404).json({ error: 'บาร์โค้ดนี้ไม่มีในออเดอร์ที่เลือก' });
+
+    if (mode === 'borrow') {
+      if (item.picked_quantity >= Number(item.requested_quantity)) {
+        return res.status(409).json({ error: 'สแกนรับสินค้าครบตามจำนวนในออเดอร์แล้ว' });
+      }
+      item.picked_quantity += 1;
+      const allPicked = items.every((entry) => entry.picked_quantity >= Number(entry.requested_quantity));
+      const update = await run('UPDATE orders SET items = ?, status = ? WHERE id = ? AND items = ?', [JSON.stringify(items), allPicked ? 'Completed' : 'In-Progress', order.id, order.items]);
+      if (update.changes !== 1) return res.status(409).json({ error: 'ออเดอร์เพิ่งถูกอัปเดต กรุณาสแกนอีกครั้ง' });
+      await run('INSERT INTO logs (user, action) VALUES (?, ?)', [user.trim(), `สแกนเบิก ${item.name} (${order.order_no})`]);
+      return res.json({ message: `บันทึกเบิก ${item.name} แล้ว`, item, orderNo: order.order_no });
+    }
+
+    if (item.returned_quantity >= item.picked_quantity) {
+      return res.status(409).json({ error: 'ไม่มีจำนวนสินค้ารายการนี้ที่ค้างคืน' });
+    }
+    item.returned_quantity += 1;
+    const update = await run('UPDATE orders SET items = ? WHERE id = ? AND items = ?', [JSON.stringify(items), order.id, order.items]);
+    if (update.changes !== 1) return res.status(409).json({ error: 'ออเดอร์เพิ่งถูกอัปเดต กรุณาสแกนอีกครั้ง' });
+    await run('UPDATE inventory SET quantity = quantity + 1 WHERE id = ?', [item.id]);
+    await run('INSERT INTO logs (user, action) VALUES (?, ?)', [user.trim(), `สแกนคืน ${item.name} (${order.order_no})`]);
+    res.json({ message: `บันทึกคืน ${item.name} แล้ว`, item, orderNo: order.order_no });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/orders/:id/complete', async (req, res) => {
+  const { user, mode } = req.body;
+  if (!user?.trim() || !['borrow', 'return'].includes(mode)) {
+    return res.status(400).json({ error: 'กรุณาระบุบัญชีและประเภทการทำรายการ' });
+  }
+
+  try {
+    const orders = await all('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+    const order = orders[0];
+    if (!order) return res.status(404).json({ error: 'ไม่พบออเดอร์' });
+    if (order.user !== user.trim()) return res.status(403).json({ error: 'ออเดอร์นี้ไม่ได้เป็นของบัญชีที่ยืนยัน' });
+    if (order.status === 'Cancelled') return res.status(400).json({ error: 'ออเดอร์นี้ถูกยกเลิกแล้ว' });
+    const sessions = await all("SELECT id FROM access_sessions WHERE user = ? AND order_id = ? AND mode = ? AND status = 'active' ORDER BY id DESC LIMIT 1", [user.trim(), order.id, mode]);
+    if (!sessions[0]) return res.status(403).json({ error: 'ยังไม่มีรายการเข้าใช้งานที่อนุมัติจากหน้าประตู' });
+
+    const items = JSON.parse(order.items).map((item) => ({
+      ...item,
+      picked_quantity: Number(item.picked_quantity ?? item.requested_quantity ?? 0),
+      returned_quantity: Number(item.returned_quantity || 0),
+    }));
+    const scanComplete = mode === 'borrow'
+      ? items.every((item) => item.picked_quantity >= Number(item.requested_quantity))
+      : items.every((item) => item.returned_quantity >= item.picked_quantity);
+    if (!scanComplete) return res.status(409).json({ error: 'กรุณาสแกนสินค้าให้ครบก่อนยืนยัน' });
+
+    const update = await run("UPDATE orders SET status = 'Completed' WHERE id = ? AND user = ? AND items = ? AND status != 'Cancelled'", [order.id, user.trim(), order.items]);
+    if (update.changes !== 1) return res.status(409).json({ error: 'ออเดอร์เพิ่งถูกอัปเดต กรุณาโหลดใหม่' });
+    const action = mode === 'borrow' ? 'ยืนยันการเบิกสินค้า' : 'ยืนยันการคืนสินค้า';
+    await run('INSERT INTO logs (user, action) VALUES (?, ?)', [user.trim(), `${action} (${order.order_no})`]);
+    await run("UPDATE access_sessions SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?", [sessions[0].id]);
+    res.json({
+      message: 'บันทึกรายการสำเร็จ แต่ยังเปิดประตูจริงไม่ได้เนื่องจากไม่มีอุปกรณ์ควบคุมประตูเชื่อมต่อ',
+      doorOpened: false,
+      orderNo: order.order_no,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -375,7 +605,7 @@ app.delete('/api/inventory/:id', async (req, res) => {
   }
 });
 
-const PORT = 3001;
+const PORT = Number(process.env.PORT || 3002);
 initializeDatabase()
   .then(() => {
     restoreCancelledOrderStock()
