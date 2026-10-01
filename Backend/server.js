@@ -98,23 +98,13 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     const existingUsers = await all('SELECT id FROM users WHERE username = ? OR email = ?', [username.trim(), email.trim().toLowerCase()]);
     if (existingUsers[0]) return res.status(409).json({ error: 'ชื่อผู้ใช้หรืออีเมลนี้มีอยู่แล้ว' });
-    const smtpConfigured = Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM);
-    const verificationCode = smtpConfigured ? String(crypto.randomInt(100000, 1000000)) : '';
     const result = await run(
       'INSERT INTO users (username, full_name, email, password_hash, email_verified, email_verification_code) VALUES (?, ?, ?, ?, ?, ?)',
-      [username.trim(), fullName.trim(), email.trim().toLowerCase(), hashPassword(password), smtpConfigured ? 0 : 1, verificationCode],
+      [username.trim(), fullName.trim(), email.trim().toLowerCase(), hashPassword(password), 1, ''],
     );
-    if (smtpConfigured) {
-      try {
-        await sendVerificationEmail(email.trim().toLowerCase(), verificationCode);
-      } catch (mailError) {
-        await run('DELETE FROM users WHERE id = ?', [result.lastID]);
-        return res.status(503).json({ error: mailError.message });
-      }
-    }
     res.status(201).json({
-      message: smtpConfigured ? 'สมัครสมาชิกสำเร็จ กรุณาตรวจสอบอีเมล' : 'สมัครสมาชิกสำเร็จ สามารถเข้าสู่ระบบได้เลย',
-      user: { id: result.lastID, username: username.trim(), fullName: fullName.trim(), email: email.trim().toLowerCase(), emailVerified: !smtpConfigured, profileImage: '' },
+      message: 'สมัครสมาชิกสำเร็จ สามารถเข้าสู่ระบบได้เลย',
+      user: { id: result.lastID, username: username.trim(), fullName: fullName.trim(), email: email.trim().toLowerCase(), emailVerified: true, profileImage: '' },
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
