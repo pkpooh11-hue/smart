@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import FaceCamera from "./FaceCamera";
 import { formatBangkokDateTime } from "./time";
+import { API_BASE } from "./api";
 import {
   Bell,
   ChevronRight,
@@ -21,7 +22,6 @@ import {
   Save,
 } from "lucide-react";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://fewer-hit-amy-watershed.trycloudflare.com";
 const API = `${API_BASE}/api/auth`;
 
 const menu = [

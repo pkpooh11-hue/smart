@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { BadgeCheck, Camera, CheckCircle2, ChevronLeft, DoorOpen, PackageCheck, ScanLine, ShieldAlert, X } from "lucide-react";
 import FaceCamera from "./FaceCamera";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://fewer-hit-amy-watershed.trycloudflare.com";
+import { API_BASE } from "./api";
 
 export default function RoomCamera({ onBack }) {
   const [identifiedUser, setIdentifiedUser] = useState(null);

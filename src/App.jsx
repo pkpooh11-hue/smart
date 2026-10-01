@@ -5,6 +5,7 @@ import Orders from "./Orders";
 import Access from "./Access";
 import Kiosk from "./Kiosk";
 import RoomCamera from "./RoomCamera";
+import { API_BASE } from "./api";
 import { formatBangkokClock, formatBangkokDate, formatBangkokDateTime } from "./time";
 import {
   LayoutDashboard, UserCheck, Package, Bell, Settings, LogOut,
@@ -14,7 +15,6 @@ import {
   UserPlus, Eye, EyeOff, ArrowRight, ScanLine,
 } from "lucide-react";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://fewer-hit-amy-watershed.trycloudflare.com";
 const AUTH_API = `${API_BASE}/api/auth`;
 
 function AuthScreen({ onAuthenticated }) {
@@ -206,10 +206,12 @@ export default function App() {
   const [inventory, setInventory] = useState([]);
   const [inventoryError, setInventoryError] = useState("");
   const [logs, setLogs] = useState([]);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   const logout = () => {
     localStorage.removeItem("smart-storage-user");
     setAuthenticatedUser(null);
+    setProfileMenuOpen(false);
   };
 
   const updateAuthenticatedUser = (user) => {
@@ -301,11 +303,42 @@ export default function App() {
             {formatBangkokDate(now)}
           </div>
         </div>
-        <div className="flex items-center gap-2 border-l border-line pl-4 text-sm">
-          <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-cyan-500/20 text-cyan-300">
-            {authenticatedUser.profileImage ? <img src={authenticatedUser.profileImage} alt="รูปโปรไฟล์" className="h-full w-full object-cover" /> : authenticatedUser.username?.[0]?.toUpperCase()}
-          </div>
-          <span className="hidden sm:block">{authenticatedUser.username}</span>
+        <div className="relative flex items-center border-l border-line pl-4 text-sm">
+          <button
+            type="button"
+            onClick={() => setProfileMenuOpen((open) => !open)}
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-white/5"
+            aria-expanded={profileMenuOpen}
+            aria-label="เปิดเมนูบัญชีผู้ใช้"
+          >
+            <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-cyan-500/20 text-cyan-300">
+              {authenticatedUser.profileImage ? <img src={authenticatedUser.profileImage} alt="รูปโปรไฟล์" className="h-full w-full object-cover" /> : authenticatedUser.username?.[0]?.toUpperCase()}
+            </div>
+            <span className="hidden sm:block">{authenticatedUser.username}</span>
+          </button>
+          {profileMenuOpen && (
+            <div className="absolute right-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-xl border border-slate-700 bg-[#0b1d2d] p-1 shadow-2xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setActive("access");
+                  setProfileMenuOpen(false);
+                }}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-slate-300 transition hover:bg-white/5 hover:text-white"
+              >
+                <Settings size={16} />
+                ตั้งค่าบัญชี
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-red-300 transition hover:bg-red-400/10"
+              >
+                <LogOut size={16} />
+                ออกจากระบบ
+              </button>
+            </div>
+          )}
         </div>
       </header>
 

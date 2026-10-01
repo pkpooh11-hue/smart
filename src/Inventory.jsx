@@ -27,8 +27,8 @@ import {
   UserRound,
 } from "lucide-react";
 import AddItemModal from "./AddItemModal";
+import { API_BASE } from "./api";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://fewer-hit-amy-watershed.trycloudflare.com";
 const API = `${API_BASE}/api/inventory`;
 const menu = [
   { label: "Dashboard", icon: LayoutDashboard },
