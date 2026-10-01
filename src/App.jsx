@@ -10,6 +10,7 @@ import {
   LayoutDashboard, UserCheck, Package, Bell, Settings, LogOut,
   Lock, Unlock, ShieldCheck, Users, AlertTriangle, Scale,
   Box, Warehouse, ChevronRight, CircleCheck, Camera, UserRound,
+  ShoppingCart, ClipboardList,
   UserPlus, Eye, EyeOff, ArrowRight, ScanLine,
 } from "lucide-react";
 
