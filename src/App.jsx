@@ -163,6 +163,39 @@ function Sidebar({ active, setActive, onLogout }) {
   );
 }
 
+function MobileNav({ active, setActive }) {
+  const menu = [
+    { key: "dashboard", label: "หน้าหลัก", icon: LayoutDashboard },
+    { key: "access", label: "Access", icon: UserCheck },
+    { key: "inventory", label: "สินค้า", icon: Package },
+    { key: "withdraw", label: "เบิก", icon: ShoppingCart },
+    { key: "orders", label: "รายการ", icon: ClipboardList },
+    { key: "kiosk", label: "Kiosk", icon: ScanLine },
+    { key: "room-camera", label: "กล้อง", icon: Camera },
+  ];
+
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-[#081a29]/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-2xl backdrop-blur lg:hidden">
+      <div className="flex gap-1 overflow-x-auto">
+        {menu.map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => setActive(key)}
+            className={`flex min-w-[4.5rem] flex-1 shrink-0 flex-col items-center gap-1 rounded-lg px-2 py-2 text-[10px] transition ${
+              active === key
+                ? "bg-emerald-400/15 text-emerald-300"
+                : "text-slate-400 hover:bg-white/5 hover:text-white"
+            }`}
+          >
+            <Icon size={18} />
+            <span className="whitespace-nowrap">{label}</span>
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
 export default function App() {
   const [authenticatedUser, setAuthenticatedUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("smart-storage-user")) || null; } catch { return null; }
@@ -278,7 +311,7 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar active={active} setActive={setActive} onLogout={logout} />
 
-        <main className="flex-1 overflow-y-auto p-4 space-y-4">
+        <main className="flex-1 overflow-y-auto space-y-4 p-4 pb-24 lg:pb-4">
           <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
             <Panel>
               <p className="text-center text-xs text-gray-400 mb-2">DOOR STATUS</p>
@@ -466,6 +499,7 @@ export default function App() {
           </section>
         </main>
       </div>
+      <MobileNav active={active} setActive={setActive} />
     </div>
   );
 }
