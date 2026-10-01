@@ -44,7 +44,7 @@ function AuthScreen({ onAuthenticated }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: form.username,
-          ...(mode === "register" ? { fullName: form.fullName, email: form.email } : {}),
+          ...(mode === "register" ? { fullName: form.fullName } : {}),
           password: form.password,
         }),
       });
@@ -59,7 +59,7 @@ function AuthScreen({ onAuthenticated }) {
       if (mode === "register") {
         setMode("login");
         setForm((current) => ({ ...current, password: "", confirmPassword: "" }));
-        setError("สมัครสมาชิกสำเร็จ กรุณาตรวจสอบอีเมลเพื่อรับรหัสยืนยัน แล้วเข้าสู่ระบบ");
+        setError("สมัครสมาชิกสำเร็จ เข้าสู่ระบบได้เลย และเพิ่มอีเมลภายหลังในตั้งค่าบัญชี");
       } else {
         if (remember) localStorage.setItem("smart-storage-user", JSON.stringify(data.user));
         onAuthenticated(data.user);
@@ -95,7 +95,6 @@ function AuthScreen({ onAuthenticated }) {
           </div>
           <form onSubmit={submit} className="space-y-4">
             {mode === "register" && <label className="block text-sm text-slate-300">ชื่อ-นามสกุล<input required value={form.fullName} onChange={updateField("fullName")} className="input mt-1.5" placeholder="เช่น สมชาย ใจดี" /></label>}
-            {mode === "register" && <label className="block text-sm text-slate-300">อีเมล<input required type="email" value={form.email} onChange={updateField("email")} className="input mt-1.5" placeholder="name@example.com" autoComplete="email" /></label>}
             <label className="block text-sm text-slate-300">ชื่อผู้ใช้<input required value={form.username} onChange={updateField("username")} className="input mt-1.5" placeholder="Username" autoComplete="username" /></label>
             <label className="block text-sm text-slate-300">รหัสผ่าน<div className="relative mt-1.5"><input required type={showPassword ? "text" : "password"} value={form.password} onChange={updateField("password")} className="input pr-11" placeholder="อย่างน้อย 6 ตัวอักษร" autoComplete={mode === "login" ? "current-password" : "new-password"} /><button type="button" onClick={() => setShowPassword((current) => !current)} className="absolute right-3 top-2.5 text-slate-400 hover:text-white" aria-label="แสดงรหัสผ่าน">{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
             {mode === "register" && <label className="block text-sm text-slate-300">ยืนยันรหัสผ่าน<input required type="password" value={form.confirmPassword} onChange={updateField("confirmPassword")} className="input mt-1.5" placeholder="กรอกรหัสผ่านอีกครั้ง" autoComplete="new-password" /></label>}

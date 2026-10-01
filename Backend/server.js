@@ -84,27 +84,24 @@ const sendVerificationEmail = async (email, code) => {
 };
 
 app.post('/api/auth/register', async (req, res) => {
-  const { username, fullName, email, password } = req.body;
-  if (!username || !fullName || !email || !password) {
+  const { username, fullName, password } = req.body;
+  if (!username || !fullName || !password) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบ' });
   }
   if (username.trim().length < 3 || password.length < 6) {
     return res.status(400).json({ error: 'ชื่อผู้ใช้ต้องมีอย่างน้อย 3 ตัวอักษร และรหัสผ่านอย่างน้อย 6 ตัว' });
   }
-  if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
-    return res.status(400).json({ error: 'รูปแบบอีเมลไม่ถูกต้อง' });
-  }
 
   try {
-    const existingUsers = await all('SELECT id FROM users WHERE username = ? OR email = ?', [username.trim(), email.trim().toLowerCase()]);
+    const existingUsers = await all('SELECT id FROM users WHERE username = ?', [username.trim()]);
     if (existingUsers[0]) return res.status(409).json({ error: 'ชื่อผู้ใช้หรืออีเมลนี้มีอยู่แล้ว' });
     const result = await run(
       'INSERT INTO users (username, full_name, email, password_hash, email_verified, email_verification_code) VALUES (?, ?, ?, ?, ?, ?)',
-      [username.trim(), fullName.trim(), email.trim().toLowerCase(), hashPassword(password), 1, ''],
+      [username.trim(), fullName.trim(), '', hashPassword(password), 1, ''],
     );
     res.status(201).json({
-      message: 'สมัครสมาชิกสำเร็จ สามารถเข้าสู่ระบบได้เลย',
-      user: { id: result.lastID, username: username.trim(), fullName: fullName.trim(), email: email.trim().toLowerCase(), emailVerified: true, profileImage: '' },
+      message: 'สมัครสมาชิกสำเร็จ สามารถเข้าสู่ระบบได้เลย และเพิ่มอีเมลภายหลังในตั้งค่าบัญชี',
+      user: { id: result.lastID, username: username.trim(), fullName: fullName.trim(), email: '', emailVerified: false, profileImage: '' },
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
