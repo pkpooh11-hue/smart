@@ -1,12 +1,38 @@
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import { initializeDatabase, run, all } from './db.js';
 
 const app = express();
 const ORDER_PICKUP_TIMEOUT_MINUTES = 15;
 const ORDER_PICKUP_TIMEOUT_MS = ORDER_PICKUP_TIMEOUT_MINUTES * 60 * 1000;
+const SESSION_COOKIE_NAME = 'smart-storage-session';
+const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const FACE_CAPTURE_RETENTION_DAYS = 30;
+const FACE_CAPTURE_DIRECTORY = path.join(path.dirname(fileURLToPath(import.meta.url)), 'private', 'face-captures');
+const ROLE_PERMISSION_KEYS = new Set(['dashboard', 'access', 'inventory', 'withdraw', 'orders', 'kiosk', 'room-camera', 'users', 'access-history', 'roles', 'role-audit']);
+const FACE_CAPTURE_FOLDERS = {
+  room_entry: 'room-entry',
+  room_exit: 'room-exit',
+  borrow: 'borrow',
+  return: 'return',
+};
+const accessHistoryClients = new Set();
+
+const broadcastAccessRecord = (record) => {
+  const event = `data: ${JSON.stringify(record)}\n\n`;
+  for (const client of accessHistoryClients) {
+    try {
+      client.write(event);
+    } catch {
+      accessHistoryClients.delete(client);
+    }
+  }
+};
 
 const restoreOrderStock = async (order) => {
   const result = await run(
@@ -25,8 +51,52 @@ const restoreOrderStock = async (order) => {
 };
 
 // ตั้งค่าให้รองรับการส่งข้อมูลขนาดใหญ่ (เช่น รูปภาพ)
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' })); 
+
+const hashSessionToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+const getSessionToken = (req) => {
+  const authorization = req.get('authorization') || '';
+  if (authorization.startsWith('Bearer ')) return authorization.slice(7);
+  const sessionCookie = req.headers.cookie?.split(';').map((cookie) => cookie.trim()).find((cookie) => cookie.startsWith(`${SESSION_COOKIE_NAME}=`));
+  return sessionCookie ? decodeURIComponent(sessionCookie.slice(SESSION_COOKIE_NAME.length + 1)) : '';
+};
+
+const requireSession = async (req, res, next) => {
+  const token = getSessionToken(req);
+  if (!token) return res.status(401).json({ error: 'กรุณาเข้าสู่ระบบใหม่' });
+  try {
+    const sessions = await all(
+      `SELECT users.* FROM auth_sessions
+       JOIN users ON users.id = auth_sessions.user_id
+       WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > CURRENT_TIMESTAMP`,
+      [hashSessionToken(token)],
+    );
+    if (!sessions[0]) return res.status(401).json({ error: 'session หมดอายุ กรุณาเข้าสู่ระบบใหม่' });
+    req.sessionUser = sessions[0];
+    next();
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const requireAdmin = (req, res, next) => {
+  if (req.sessionUser?.role !== 'admin') return res.status(403).json({ error: 'ต้องใช้บัญชีผู้ดูแลระบบ' });
+  next();
+};
+
+const requirePagePermission = (permission) => async (req, res, next) => {
+  if (req.sessionUser?.role === 'admin') return next();
+  try {
+    const roles = await all('SELECT permissions FROM roles WHERE role_key = ?', [req.sessionUser?.role]);
+    if (!parseRolePermissions(roles[0]?.permissions).includes(permission)) {
+      return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงหน้านี้' });
+    }
+    next();
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
 
 const hashPassword = (password, salt = crypto.randomBytes(16).toString('hex')) => {
   const passwordHash = crypto.scryptSync(password, salt, 64).toString('hex');
@@ -42,20 +112,136 @@ const verifyPassword = (password, storedHash) => {
   );
 };
 
-const publicUser = (user) => ({
+const publicUser = (user, roleConfig) => ({
   id: user.id,
   username: user.username,
+  studentId: user.student_id || "",
   fullName: user.full_name,
   email: user.email || "",
   emailVerified: Boolean(user.email_verified),
   profileImage: user.profile_image || "",
   faceEnrolled: Boolean(user.face_descriptor),
+  role: user.role || 'student',
+  roleName: roleConfig?.name || user.role || 'นักเรียน',
+  permissions: roleConfig ? parseRolePermissions(roleConfig.permissions) : [],
 });
+
+const parseRolePermissions = (permissions) => {
+  try {
+    const parsed = JSON.parse(permissions || '[]');
+    return Array.isArray(parsed) ? parsed.filter((permission) => ROLE_PERMISSION_KEYS.has(permission)) : [];
+  } catch {
+    return [];
+  }
+};
+
+const getPublicUser = async (user) => {
+  const roles = await all('SELECT name, permissions FROM roles WHERE role_key = ?', [user.role || 'student']);
+  return publicUser(user, roles[0]);
+};
+
+const addRoleAudit = ({ action, actor, roleKey, roleName, targetUser = null, beforeState = null, afterState = null }) => run(
+  `INSERT INTO role_audit_logs (
+    action, actor_user_id, actor_username, role_key, role_name,
+    target_user_id, target_username, before_state, after_state
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  [
+    action,
+    actor.id,
+    actor.username,
+    roleKey || null,
+    roleName,
+    targetUser?.id ?? null,
+    targetUser?.username ?? null,
+    JSON.stringify(beforeState),
+    JSON.stringify(afterState),
+  ],
+);
+
+const parseAuditState = (state) => {
+  try {
+    return state ? JSON.parse(state) : null;
+  } catch {
+    return null;
+  }
+};
 
 const normalizeFaceDescriptor = (descriptor) => {
   if (!Array.isArray(descriptor) || descriptor.length !== 128) return null;
   if (!descriptor.every((value) => Number.isFinite(value) && value >= -1 && value <= 1)) return null;
   return descriptor;
+};
+
+const findBestFaceMatch = async (descriptor) => {
+  const users = await all('SELECT id, username, full_name, email, email_verified, profile_image, face_descriptor FROM users WHERE face_descriptor IS NOT NULL AND email_verified = 1');
+  let bestMatch = null;
+  for (const user of users) {
+    const savedDescriptor = JSON.parse(user.face_descriptor);
+    const distance = Math.sqrt(savedDescriptor.reduce((sum, value, index) => sum + (value - descriptor[index]) ** 2, 0));
+    if (distance < 0.5 && (!bestMatch || distance < bestMatch.distance)) bestMatch = { user, distance };
+  }
+  return bestMatch;
+};
+
+const saveFaceCapture = async ({ snapshot, user, eventType, orderId }) => {
+  const folder = FACE_CAPTURE_FOLDERS[eventType];
+  if (!folder) throw Object.assign(new Error('ประเภทภาพบันทึกไม่ถูกต้อง'), { statusCode: 400 });
+  const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(snapshot || '');
+  if (!match) throw Object.assign(new Error('ภาพจากกล้องไม่ถูกต้อง กรุณาสแกนใบหน้าอีกครั้ง'), { statusCode: 400 });
+  const image = Buffer.from(match[1], 'base64');
+  if (image.length > 2 * 1024 * 1024 || image.length < 4 || image[0] !== 0xff || image[1] !== 0xd8 || image.at(-2) !== 0xff || image.at(-1) !== 0xd9) {
+    throw Object.assign(new Error('ขนาดหรือรูปแบบภาพไม่ถูกต้อง กรุณาสแกนใบหน้าอีกครั้ง'), { statusCode: 400 });
+  }
+
+  const imageDirectory = path.join(FACE_CAPTURE_DIRECTORY, folder);
+  await mkdir(imageDirectory, { recursive: true });
+  const imageFile = path.join(folder, `${crypto.randomUUID()}.jpg`);
+  const imagePath = path.join(FACE_CAPTURE_DIRECTORY, imageFile);
+  await writeFile(imagePath, image, { flag: 'wx' });
+  let recordId;
+  try {
+    const result = await run(
+      'INSERT INTO face_access_records (user_id, username, event_type, order_id, image_file) VALUES (?, ?, ?, ?, ?)',
+      [user.id, user.username, eventType, orderId, imageFile],
+    );
+    recordId = result.lastID;
+  } catch (error) {
+    await unlink(imagePath).catch(() => {});
+    throw error;
+  }
+  if (eventType === 'room_entry' || eventType === 'room_exit') {
+    const records = await all(
+      'SELECT id, username, event_type AS eventType, order_id AS orderId, created_at AS createdAt FROM face_access_records WHERE id = ?',
+      [recordId],
+    );
+    if (records[0]) broadcastAccessRecord(records[0]);
+  }
+  return recordId;
+};
+
+const deleteFaceCapture = async (recordId) => {
+  const records = await all('SELECT image_file FROM face_access_records WHERE id = ?', [recordId]);
+  if (!records[0]) return;
+  await unlink(path.join(FACE_CAPTURE_DIRECTORY, records[0].image_file)).catch(() => {});
+  await run('DELETE FROM face_access_records WHERE id = ?', [recordId]);
+};
+
+const cleanupExpiredFaceCaptures = async () => {
+  const expiredRecords = await all(
+    "SELECT id, image_file FROM face_access_records WHERE created_at < datetime('now', ?)",
+    [`-${FACE_CAPTURE_RETENTION_DAYS} days`],
+  );
+  for (const record of expiredRecords) {
+    try {
+      await unlink(path.join(FACE_CAPTURE_DIRECTORY, record.image_file));
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        console.error('ลบภาพบันทึกใบหน้าไม่สำเร็จ:', error);
+        continue;
+      }
+    }
+    await run('DELETE FROM face_access_records WHERE id = ?', [record.id]);
+  }
 };
 
 const sendVerificationEmail = async (email, code) => {
@@ -84,24 +270,25 @@ const sendVerificationEmail = async (email, code) => {
 };
 
 app.post('/api/auth/register', async (req, res) => {
-  const { username, fullName, password } = req.body;
-  if (!username || !fullName || !password) {
+  const { username, studentId, fullName, password } = req.body;
+  if (!username || !studentId || !fullName || !password) {
     return res.status(400).json({ error: 'กรุณากรอกข้อมูลให้ครบ' });
   }
-  if (username.trim().length < 3 || password.length < 6) {
-    return res.status(400).json({ error: 'ชื่อผู้ใช้ต้องมีอย่างน้อย 3 ตัวอักษร และรหัสผ่านอย่างน้อย 6 ตัว' });
+  if (username.trim().length < 3 || password.length < 6 || !/^\d{5,20}$/.test(String(studentId).trim())) {
+    return res.status(400).json({ error: 'ชื่อผู้ใช้ต้องมีอย่างน้อย 3 ตัว รหัสผ่านอย่างน้อย 6 ตัว และรหัสนักเรียนเป็นตัวเลข 5-20 หลัก' });
   }
 
   try {
-    const existingUsers = await all('SELECT id FROM users WHERE username = ?', [username.trim()]);
-    if (existingUsers[0]) return res.status(409).json({ error: 'ชื่อผู้ใช้หรืออีเมลนี้มีอยู่แล้ว' });
+    const normalizedStudentId = String(studentId).trim();
+    const existingUsers = await all('SELECT id FROM users WHERE username = ? OR student_id = ?', [username.trim(), normalizedStudentId]);
+    if (existingUsers[0]) return res.status(409).json({ error: 'ชื่อผู้ใช้หรือรหัสนักเรียนนี้ถูกใช้งานแล้ว' });
     const result = await run(
-      'INSERT INTO users (username, full_name, email, password_hash, email_verified, email_verification_code) VALUES (?, ?, ?, ?, ?, ?)',
-      [username.trim(), fullName.trim(), '', hashPassword(password), 1, ''],
+      'INSERT INTO users (username, student_id, full_name, email, password_hash, email_verified, email_verification_code) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [username.trim(), normalizedStudentId, fullName.trim(), '', hashPassword(password), 1, ''],
     );
     res.status(201).json({
       message: 'สมัครสมาชิกสำเร็จ สามารถเข้าสู่ระบบได้เลย และเพิ่มอีเมลภายหลังในตั้งค่าบัญชี',
-      user: { id: result.lastID, username: username.trim(), fullName: fullName.trim(), email: '', emailVerified: false, profileImage: '' },
+      user: { id: result.lastID, username: username.trim(), studentId: normalizedStudentId, fullName: fullName.trim(), email: '', emailVerified: false, profileImage: '', role: 'student' },
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -112,11 +299,213 @@ app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
   try {
-    const users = await all('SELECT * FROM users WHERE username = ?', [username.trim()]);
+    const users = await all('SELECT * FROM users WHERE username = ? OR student_id = ?', [username.trim(), username.trim()]);
     if (!users[0] || !verifyPassword(password, users[0].password_hash)) {
       return res.status(401).json({ error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
     }
-    res.json({ user: publicUser(users[0]) });
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    await run('DELETE FROM auth_sessions WHERE expires_at <= CURRENT_TIMESTAMP');
+    await run(
+      "INSERT INTO auth_sessions (token_hash, user_id, expires_at) VALUES (?, ?, datetime('now', '+12 hours'))",
+      [hashSessionToken(sessionToken), users[0].id],
+    );
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, {
+      httpOnly: true,
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: SESSION_MAX_AGE_MS,
+      path: '/',
+    });
+    res.json({ user: await getPublicUser(users[0]) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/auth/me', requireSession, async (req, res) => {
+  res.json({ user: await getPublicUser(req.sessionUser) });
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  const sessionToken = getSessionToken(req);
+  if (sessionToken) await run('DELETE FROM auth_sessions WHERE token_hash = ?', [hashSessionToken(sessionToken)]);
+  res.clearCookie(SESSION_COOKIE_NAME, { httpOnly: true, sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', secure: process.env.NODE_ENV === 'production', path: '/' });
+  res.json({ message: 'ออกจากระบบแล้ว' });
+});
+
+app.get('/api/users', requireSession, requirePagePermission('users'), async (req, res) => {
+  try {
+    const users = await all(
+      `SELECT users.id, users.username, users.full_name, users.student_id, users.email, users.email_verified, users.role,
+              roles.name AS role_name,
+              users.face_descriptor IS NOT NULL AS face_enrolled, users.created_at
+       FROM users LEFT JOIN roles ON roles.role_key = users.role
+       ORDER BY users.username COLLATE NOCASE`,
+    );
+    res.json(users.map((user) => ({
+      id: user.id,
+      username: user.username,
+      fullName: user.full_name,
+      studentId: user.student_id || '',
+      email: user.email || '',
+      emailVerified: Boolean(user.email_verified),
+      faceEnrolled: Boolean(user.face_enrolled),
+      role: user.role || 'student',
+      roleName: user.role_name || user.role || 'นักเรียน',
+      createdAt: user.created_at,
+    })));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/roles', requireSession, requirePagePermission('roles'), async (_req, res) => {
+  try {
+    const roles = await all('SELECT role_key, name, permissions, is_system FROM roles ORDER BY is_system DESC, name COLLATE NOCASE');
+    res.json(roles.map((role) => ({
+      key: role.role_key,
+      name: role.name,
+      permissions: parseRolePermissions(role.permissions),
+      isSystem: Boolean(role.is_system),
+    })));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/roles/audit', requireSession, requirePagePermission('role-audit'), async (_req, res) => {
+  try {
+    const events = await all(
+      `SELECT id, action, actor_username AS actorUsername, role_key AS roleKey,
+              role_name AS roleName, target_username AS targetUsername,
+              before_state AS beforeState, after_state AS afterState, created_at AS createdAt
+       FROM role_audit_logs
+       ORDER BY id DESC
+       LIMIT 500`,
+    );
+    res.json(events.map((event) => ({
+      ...event,
+      beforeState: parseAuditState(event.beforeState),
+      afterState: parseAuditState(event.afterState),
+    })));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/roles', requireSession, requireAdmin, async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  const { permissions } = req.body;
+  if (!name || name.length > 40) return res.status(400).json({ error: 'ชื่อบทบาทต้องมี 1-40 ตัวอักษร' });
+  if (!Array.isArray(permissions) || permissions.some((permission) => !ROLE_PERMISSION_KEYS.has(permission))) {
+    return res.status(400).json({ error: 'รายการสิทธิ์ไม่ถูกต้อง' });
+  }
+  try {
+    const duplicates = await all('SELECT role_key FROM roles WHERE name = ? COLLATE NOCASE', [name]);
+    if (duplicates.length) return res.status(409).json({ error: 'มีชื่อบทบาทนี้แล้ว' });
+    const key = `custom_${crypto.randomBytes(6).toString('hex')}`;
+    const normalizedPermissions = [...new Set(['dashboard', ...permissions])];
+    await run(
+      'INSERT INTO roles (role_key, name, permissions, is_system) VALUES (?, ?, ?, 0)',
+      [key, name, JSON.stringify(normalizedPermissions)],
+    );
+    await addRoleAudit({
+      action: 'role_created',
+      actor: req.sessionUser,
+      roleKey: key,
+      roleName: name,
+      afterState: { name, permissions: normalizedPermissions },
+    });
+    res.status(201).json({ key, name, permissions: normalizedPermissions, isSystem: false });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/roles/:key', requireSession, requireAdmin, async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  const { permissions } = req.body;
+  if (req.params.key === 'admin') return res.status(400).json({ error: 'ไม่สามารถแก้ไขสิทธิ์ผู้ดูแลระบบได้' });
+  if (!name || name.length > 40) return res.status(400).json({ error: 'ชื่อบทบาทต้องมี 1-40 ตัวอักษร' });
+  if (!Array.isArray(permissions) || permissions.some((permission) => !ROLE_PERMISSION_KEYS.has(permission))) {
+    return res.status(400).json({ error: 'รายการสิทธิ์ไม่ถูกต้อง' });
+  }
+  try {
+    const role = await all('SELECT role_key, name, permissions FROM roles WHERE role_key = ?', [req.params.key]);
+    if (!role.length) return res.status(404).json({ error: 'ไม่พบบทบาทนี้' });
+    const duplicates = await all('SELECT role_key FROM roles WHERE name = ? COLLATE NOCASE AND role_key != ?', [name, req.params.key]);
+    if (duplicates.length) return res.status(409).json({ error: 'มีชื่อบทบาทนี้แล้ว' });
+    const normalizedPermissions = [...new Set(['dashboard', ...permissions])];
+    await run('UPDATE roles SET name = ?, permissions = ? WHERE role_key = ?', [name, JSON.stringify(normalizedPermissions), req.params.key]);
+    await addRoleAudit({
+      action: 'role_updated',
+      actor: req.sessionUser,
+      roleKey: req.params.key,
+      roleName: name,
+      beforeState: { name: role[0].name, permissions: parseRolePermissions(role[0].permissions) },
+      afterState: { name, permissions: normalizedPermissions },
+    });
+    res.json({ key: req.params.key, name, permissions: normalizedPermissions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/roles/:key', requireSession, requireAdmin, async (req, res) => {
+  if (['admin', 'teacher', 'student'].includes(req.params.key)) return res.status(400).json({ error: 'ไม่สามารถลบบทบาทระบบได้' });
+  try {
+    const roles = await all('SELECT role_key, name, permissions FROM roles WHERE role_key = ?', [req.params.key]);
+    if (!roles.length) return res.status(404).json({ error: 'ไม่พบบทบาทนี้' });
+    const assignedUsers = await all('SELECT id FROM users WHERE role = ? LIMIT 1', [req.params.key]);
+    if (assignedUsers.length) return res.status(409).json({ error: 'ยังมีผู้ใช้งานที่ใช้บทบาทนี้อยู่' });
+    const result = await run('DELETE FROM roles WHERE role_key = ?', [req.params.key]);
+    if (!result.changes) return res.status(404).json({ error: 'ไม่พบบทบาทนี้' });
+    await addRoleAudit({
+      action: 'role_deleted',
+      actor: req.sessionUser,
+      roleKey: roles[0].role_key,
+      roleName: roles[0].name,
+      beforeState: { name: roles[0].name, permissions: parseRolePermissions(roles[0].permissions) },
+    });
+    res.json({ message: 'ลบบทบาทแล้ว' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/users/:id/role', requireSession, requireAdmin, async (req, res) => {
+  const { role } = req.body;
+  try {
+    const roleExists = await all('SELECT role_key, name FROM roles WHERE role_key = ?', [role]);
+    if (!roleExists.length) return res.status(400).json({ error: 'บทบาทไม่ถูกต้อง' });
+    const targetUsers = await all(
+      `SELECT users.id, users.username, users.role, roles.name AS role_name
+       FROM users LEFT JOIN roles ON roles.role_key = users.role
+       WHERE users.id = ?`,
+      [req.params.id],
+    );
+    if (!targetUsers.length) return res.status(404).json({ error: 'ไม่พบบัญชีผู้ใช้' });
+    const result = await run(
+      `UPDATE users SET role = ? WHERE id = ?
+       AND (role != 'admin' OR ? = 'admin' OR (SELECT COUNT(*) FROM users WHERE role = 'admin') > 1)`,
+      [role, req.params.id, role],
+    );
+    if (result.changes !== 1) {
+      const users = await all('SELECT id FROM users WHERE id = ?', [req.params.id]);
+      if (!users.length) return res.status(404).json({ error: 'ไม่พบบัญชีผู้ใช้' });
+      return res.status(409).json({ error: 'ไม่สามารถลดสิทธิ์ผู้ดูแลระบบคนสุดท้ายได้' });
+    }
+    await addRoleAudit({
+      action: 'user_role_changed',
+      actor: req.sessionUser,
+      roleKey: role,
+      roleName: roleExists[0].name,
+      targetUser: targetUsers[0],
+      beforeState: { role: targetUsers[0].role, roleName: targetUsers[0].role_name || targetUsers[0].role },
+      afterState: { role, roleName: roleExists[0].name },
+    });
+    const users = await all('SELECT * FROM users WHERE id = ?', [req.params.id]);
+    res.json({ user: await getPublicUser(users[0]) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -133,7 +522,7 @@ app.put('/api/auth/users/:id/face', async (req, res) => {
     await run('UPDATE users SET face_descriptor = ? WHERE id = ?', [JSON.stringify(normalizedDescriptor), req.params.id]);
     await run('INSERT INTO logs (user, action) VALUES (?, ?)', [users[0].username, 'ลงทะเบียนข้อมูลใบหน้า']);
     const updatedUsers = await all('SELECT * FROM users WHERE id = ?', [req.params.id]);
-    res.json({ user: publicUser(updatedUsers[0]), message: 'ลงทะเบียนใบหน้าแล้ว' });
+    res.json({ user: await getPublicUser(updatedUsers[0]), message: 'ลงทะเบียนใบหน้าแล้ว' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -146,7 +535,7 @@ app.delete('/api/auth/users/:id/face', async (req, res) => {
     if (!users[0] || !verifyPassword(password || '', users[0].password_hash)) return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
     await run('UPDATE users SET face_descriptor = NULL WHERE id = ?', [req.params.id]);
     await run('INSERT INTO logs (user, action) VALUES (?, ?)', [users[0].username, 'ลบข้อมูลใบหน้า']);
-    res.json({ message: 'ลบข้อมูลใบหน้าแล้ว', user: publicUser({ ...users[0], face_descriptor: null }) });
+    res.json({ message: 'ลบข้อมูลใบหน้าแล้ว', user: await getPublicUser({ ...users[0], face_descriptor: null }) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -156,13 +545,7 @@ app.post('/api/auth/face/recognize', async (req, res) => {
   const descriptor = normalizeFaceDescriptor(req.body.descriptor);
   if (!descriptor) return res.status(400).json({ error: 'ไม่พบข้อมูลใบหน้าที่ถูกต้อง' });
   try {
-    const users = await all('SELECT id, username, full_name, email, email_verified, profile_image, face_descriptor FROM users WHERE face_descriptor IS NOT NULL AND email_verified = 1');
-    let bestMatch = null;
-    for (const user of users) {
-      const savedDescriptor = JSON.parse(user.face_descriptor);
-      const distance = Math.sqrt(savedDescriptor.reduce((sum, value, index) => sum + (value - descriptor[index]) ** 2, 0));
-      if (distance < 0.5 && (!bestMatch || distance < bestMatch.distance)) bestMatch = { user, distance };
-    }
+    const bestMatch = await findBestFaceMatch(descriptor);
     if (!bestMatch) return res.status(404).json({ error: 'ไม่รู้จักใบหน้านี้ หรือยังไม่ได้ลงทะเบียน' });
     await run('INSERT INTO logs (user, action) VALUES (?, ?)', [bestMatch.user.username, 'ยืนยันตัวตนด้วยใบหน้า (โหมดทดสอบ)']);
     res.json({
@@ -179,22 +562,25 @@ app.post('/api/auth/face/recognize', async (req, res) => {
 });
 
 app.put('/api/auth/users/:id/profile', async (req, res) => {
-  const { username, fullName, email, profileImage } = req.body;
+  const { username, studentId, fullName, email, profileImage } = req.body;
   if (!username?.trim() || username.trim().length < 3) return res.status(400).json({ error: 'ชื่อผู้ใช้ต้องมีอย่างน้อย 3 ตัวอักษร' });
   if (!fullName?.trim()) return res.status(400).json({ error: 'กรุณากรอกชื่อ-นามสกุล' });
+  if (!/^\d{5,20}$/.test(String(studentId || '').trim())) return res.status(400).json({ error: 'รหัสนักเรียนต้องเป็นตัวเลข 5-20 หลัก' });
   if (email?.trim() && !/^\S+@\S+\.\S+$/.test(email.trim())) return res.status(400).json({ error: 'กรุณากรอกอีเมลให้ถูกต้อง' });
   if (profileImage && profileImage.length > 8 * 1024 * 1024) return res.status(400).json({ error: 'รูปโปรไฟล์มีขนาดใหญ่เกินไป' });
   try {
     const normalizedEmail = email?.trim().toLowerCase() || '';
-    const duplicate = await all('SELECT id, username, email FROM users WHERE (username = ? OR (email != ? AND email = ?)) AND id != ?', [username.trim(), '', normalizedEmail, req.params.id]);
+    const normalizedStudentId = String(studentId).trim();
+    const duplicate = await all('SELECT id, username, student_id, email FROM users WHERE (username = ? OR student_id = ? OR (email != ? AND email = ?)) AND id != ?', [username.trim(), normalizedStudentId, '', normalizedEmail, req.params.id]);
     if (duplicate[0]?.username === username.trim()) return res.status(409).json({ error: 'ชื่อผู้ใช้นี้ถูกใช้งานแล้ว' });
+    if (duplicate[0]?.student_id === normalizedStudentId) return res.status(409).json({ error: 'รหัสนักเรียนนี้ถูกใช้งานแล้ว' });
     if (duplicate[0]) return res.status(409).json({ error: 'อีเมลนี้ถูกใช้งานแล้ว' });
     const currentUsers = await all('SELECT email FROM users WHERE id = ?', [req.params.id]);
     const emailChanged = currentUsers[0]?.email !== normalizedEmail;
     const verificationCode = emailChanged ? String(crypto.randomInt(100000, 1000000)) : '';
     await run(
-      'UPDATE users SET username = ?, full_name = ?, email = ?, email_verified = ?, email_verification_code = ?, profile_image = ? WHERE id = ?',
-      [username.trim(), fullName.trim(), normalizedEmail, emailChanged ? 0 : 1, verificationCode, profileImage || '', req.params.id],
+      'UPDATE users SET username = ?, student_id = ?, full_name = ?, email = ?, email_verified = ?, email_verification_code = ?, profile_image = ? WHERE id = ?',
+      [username.trim(), normalizedStudentId, fullName.trim(), normalizedEmail, emailChanged ? 0 : 1, verificationCode, profileImage || '', req.params.id],
     );
     if (emailChanged) {
       try {
@@ -205,7 +591,7 @@ app.put('/api/auth/users/:id/profile', async (req, res) => {
     }
     const users = await all('SELECT * FROM users WHERE id = ?', [req.params.id]);
     if (!users[0]) return res.status(404).json({ error: 'ไม่พบบัญชีผู้ใช้' });
-    res.json({ user: publicUser(users[0]), verificationCode });
+    res.json({ user: await getPublicUser(users[0]), verificationCode });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -233,7 +619,7 @@ app.post('/api/auth/users/:id/verify-email', async (req, res) => {
     if (users[0].email_verification_code !== String(code || '').trim()) return res.status(400).json({ error: 'รหัสยืนยันอีเมลไม่ถูกต้อง' });
     await run('UPDATE users SET email_verified = 1, email_verification_code = ? WHERE id = ?', ['', req.params.id]);
     const updatedUsers = await all('SELECT * FROM users WHERE id = ?', [req.params.id]);
-    res.json({ user: publicUser(updatedUsers[0]) });
+    res.json({ user: await getPublicUser(updatedUsers[0]) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -388,12 +774,12 @@ app.post('/api/inventory/withdraw', async (req, res) => {
       picked_quantity: 0,
       returned_quantity: 0,
     }));
-    await run(
+    const orderResult = await run(
       "INSERT INTO orders (order_no, user, note, items, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
       [orderNo, user, note, JSON.stringify(itemsWithRequestedQuantity)],
     );
     await run('INSERT INTO logs (user, action) VALUES (?, ?)', [user, `เบิกสินค้า ${items.length} รายการ (${orderNo})${note ? `: ${note}` : ''}`]);
-    res.json({ message: 'เบิกสินค้าสำเร็จ', orderNo });
+    res.json({ message: 'เบิกสินค้าเข้าคิวแล้ว', orderId: orderResult.lastID, orderNo });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -420,12 +806,16 @@ app.get('/api/orders', async (req, res) => {
 });
 
 app.post('/api/access/door/authorize', async (req, res) => {
-  const { user, orderId, mode } = req.body;
+  const { user, orderId, mode, faceSnapshot } = req.body;
+  const descriptor = normalizeFaceDescriptor(req.body.descriptor);
   if (!user?.trim() || !['borrow', 'return'].includes(mode) || !Number.isInteger(Number(orderId))) {
     return res.status(400).json({ error: 'กรุณาระบุบัญชี ประเภทการทำรายการ และออเดอร์' });
   }
+  if (!descriptor) return res.status(400).json({ error: 'ไม่พบข้อมูลใบหน้าที่ถูกต้อง' });
 
   try {
+    const bestMatch = await findBestFaceMatch(descriptor);
+    if (!bestMatch || bestMatch.user.username !== user.trim()) return res.status(403).json({ error: 'ใบหน้าที่สแกนไม่ตรงกับบัญชีผู้ใช้' });
     const orders = await all('SELECT * FROM orders WHERE id = ?', [Number(orderId)]);
     const order = orders[0];
     if (!order) return res.status(404).json({ error: 'ไม่พบออเดอร์' });
@@ -439,7 +829,16 @@ app.post('/api/access/door/authorize', async (req, res) => {
     if (!canProceed) return res.status(409).json({ error: 'ออเดอร์นี้ไม่มีรายการที่ทำต่อได้' });
 
     await run("UPDATE access_sessions SET status = 'expired' WHERE user = ? AND status = 'active'", [user.trim()]);
-    await run('INSERT INTO access_sessions (user, order_id, mode) VALUES (?, ?, ?)', [user.trim(), order.id, mode]);
+    const sessionResult = await run('INSERT INTO access_sessions (user, order_id, mode) VALUES (?, ?, ?)', [user.trim(), order.id, mode]);
+    let operationCaptureId;
+    try {
+      operationCaptureId = await saveFaceCapture({ snapshot: faceSnapshot, user: bestMatch.user, eventType: mode, orderId: order.id });
+      await saveFaceCapture({ snapshot: faceSnapshot, user: bestMatch.user, eventType: 'room_entry', orderId: order.id });
+    } catch (captureError) {
+      if (operationCaptureId) await deleteFaceCapture(operationCaptureId);
+      await run('DELETE FROM access_sessions WHERE id = ?', [sessionResult.lastID]);
+      throw captureError;
+    }
     const action = mode === 'borrow' ? 'ยืนยันสิทธิ์เข้ารับสินค้า' : 'ยืนยันสิทธิ์นำสินค้ามาคืน';
     await run('INSERT INTO logs (user, action) VALUES (?, ?)', [user.trim(), `${action} (${order.order_no}) - ทดสอบ: ไม่มีอุปกรณ์ควบคุมประตู`]);
     res.json({
@@ -448,7 +847,116 @@ app.post('/api/access/door/authorize', async (req, res) => {
       orderNo: order.order_no,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/access/room/verify-face', async (req, res) => {
+  const descriptor = normalizeFaceDescriptor(req.body.descriptor);
+  if (!descriptor) return res.status(400).json({ error: 'ไม่พบข้อมูลใบหน้าที่ถูกต้อง' });
+  try {
+    const bestMatch = await findBestFaceMatch(descriptor);
+    if (!bestMatch) return res.status(404).json({ error: 'ไม่รู้จักใบหน้านี้ หรือยังไม่ได้ลงทะเบียน' });
+    const sessions = await all(
+      "SELECT id, user, order_id AS orderId, mode, created_at AS createdAt FROM access_sessions WHERE user = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
+      [bestMatch.user.username],
+    );
+    if (!sessions[0]) return res.status(404).json({ error: 'ไม่พบรายการเข้าใช้งานที่รออยู่จากหน้าประตู' });
+    const orders = await all('SELECT order_no AS orderNo, status FROM orders WHERE id = ? AND user = ?', [sessions[0].orderId, bestMatch.user.username]);
+    if (!orders[0] || orders[0].status === 'Cancelled') return res.status(404).json({ error: 'ไม่พบออเดอร์ที่อนุมัติจากหน้าประตู หรือออเดอร์ถูกยกเลิกแล้ว' });
+
+    await run('INSERT INTO logs (user, action) VALUES (?, ?)', [bestMatch.user.username, `ยืนยันตัวตนภายในห้อง (${orders[0].orderNo})`]);
+    res.json({
+      user: { id: bestMatch.user.id, username: bestMatch.user.username, fullName: bestMatch.user.full_name },
+      session: { ...sessions[0], orderNo: orders[0].orderNo },
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+app.post('/api/access/room/exit', async (req, res) => {
+  const { user, orderId, faceSnapshot } = req.body;
+  const descriptor = normalizeFaceDescriptor(req.body.descriptor);
+  if (!user?.trim() || !Number.isInteger(Number(orderId))) return res.status(400).json({ error: 'กรุณาระบุบัญชีและออเดอร์' });
+  if (!descriptor) return res.status(400).json({ error: 'ไม่พบข้อมูลใบหน้าขาออกที่ถูกต้อง' });
+
+  try {
+    const bestMatch = await findBestFaceMatch(descriptor);
+    if (!bestMatch || bestMatch.user.username !== user.trim()) return res.status(403).json({ error: 'ใบหน้าขาออกไม่ตรงกับบัญชีที่เข้าห้อง' });
+    const sessions = await all(
+      "SELECT id FROM access_sessions WHERE user = ? AND order_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
+      [user.trim(), Number(orderId)],
+    );
+    if (!sessions[0]) return res.status(404).json({ error: 'ไม่พบ session เข้าห้องที่ยังเปิดอยู่' });
+    const orders = await all('SELECT order_no FROM orders WHERE id = ? AND user = ?', [Number(orderId), user.trim()]);
+    if (!orders[0]) return res.status(404).json({ error: 'ไม่พบออเดอร์ของบัญชีนี้' });
+
+    const recordId = await saveFaceCapture({ snapshot: faceSnapshot, user: bestMatch.user, eventType: 'room_exit', orderId: Number(orderId) });
+    const closedSession = await run(
+      "UPDATE access_sessions SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active'",
+      [sessions[0].id],
+    );
+    if (closedSession.changes !== 1) {
+      await deleteFaceCapture(recordId);
+      return res.status(409).json({ error: 'session นี้ถูกปิดไปแล้ว กรุณาโหลดหน้าใหม่' });
+    }
+    await run('INSERT INTO logs (user, action) VALUES (?, ?)', [user.trim(), `ออกจากห้อง (${orders[0].order_no})`]);
+    res.json({
+      message: 'บันทึกภาพและเวลาออกจากห้องแล้ว แต่ประตูจริงยังไม่เปิดเพราะไม่มีอุปกรณ์ควบคุมประตูเชื่อมต่อ',
+      doorOpened: false,
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+app.get('/api/access/records/stream', requireSession, requirePagePermission('access-history'), (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+  res.write(': access-history-connected\n\n');
+  accessHistoryClients.add(res);
+  const keepAlive = setInterval(() => res.write(': keep-alive\n\n'), 20000);
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    accessHistoryClients.delete(res);
+  });
+});
+
+app.get('/api/access/records', requireSession, requirePagePermission('access-history'), async (_req, res) => {
+  try {
+    const records = await all(
+      `SELECT id, username, event_type AS eventType, order_id AS orderId, created_at AS createdAt
+       FROM face_access_records
+       WHERE event_type IN ('room_entry', 'room_exit')
+       ORDER BY id DESC`,
+    );
+    res.json(records);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/access/records/:id/image', requireSession, requirePagePermission('access-history'), async (req, res) => {
+  const recordId = Number(req.params.id);
+  if (!Number.isInteger(recordId) || recordId < 1) return res.status(400).json({ error: 'รหัสภาพไม่ถูกต้อง' });
+  try {
+    const records = await all('SELECT image_file FROM face_access_records WHERE id = ?', [recordId]);
+    const imagePath = records[0] && path.resolve(FACE_CAPTURE_DIRECTORY, records[0].image_file);
+    if (!records[0] || !imagePath.startsWith(`${path.resolve(FACE_CAPTURE_DIRECTORY)}${path.sep}`)) {
+      return res.status(404).json({ error: 'ไม่พบภาพบันทึกการเข้าออก' });
+    }
+    res.set('Cache-Control', 'private, no-store');
+    res.type('jpg').sendFile(imagePath, (error) => {
+      if (error && !res.headersSent) res.status(404).end();
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -517,12 +1025,16 @@ app.post('/api/orders/:id/scan', async (req, res) => {
 });
 
 app.post('/api/orders/:id/complete', async (req, res) => {
-  const { user, mode } = req.body;
+  const { user, mode, faceSnapshot } = req.body;
+  const descriptor = normalizeFaceDescriptor(req.body.descriptor);
   if (!user?.trim() || !['borrow', 'return'].includes(mode)) {
     return res.status(400).json({ error: 'กรุณาระบุบัญชีและประเภทการทำรายการ' });
   }
+  if (!descriptor) return res.status(400).json({ error: 'ไม่พบข้อมูลใบหน้าขาออกที่ถูกต้อง' });
 
   try {
+    const bestMatch = await findBestFaceMatch(descriptor);
+    if (!bestMatch || bestMatch.user.username !== user.trim()) return res.status(403).json({ error: 'ใบหน้าขาออกไม่ตรงกับบัญชีที่เริ่มรายการ' });
     const orders = await all('SELECT * FROM orders WHERE id = ?', [req.params.id]);
     const order = orders[0];
     if (!order) return res.status(404).json({ error: 'ไม่พบออเดอร์' });
@@ -537,12 +1049,18 @@ app.post('/api/orders/:id/complete', async (req, res) => {
       returned_quantity: Number(item.returned_quantity || 0),
     }));
     const scanComplete = mode === 'borrow'
-      ? items.every((item) => item.picked_quantity >= Number(item.requested_quantity))
-      : items.every((item) => item.returned_quantity >= item.picked_quantity);
+      || items.every((item) => item.returned_quantity >= item.picked_quantity);
     if (!scanComplete) return res.status(409).json({ error: 'กรุณาสแกนสินค้าให้ครบก่อนยืนยัน' });
 
-    const update = await run("UPDATE orders SET status = 'Completed' WHERE id = ? AND user = ? AND items = ? AND status != 'Cancelled'", [order.id, user.trim(), order.items]);
-    if (update.changes !== 1) return res.status(409).json({ error: 'ออเดอร์เพิ่งถูกอัปเดต กรุณาโหลดใหม่' });
+    const completedItems = items.map((item) => mode === 'borrow'
+      ? { ...item, picked_quantity: Number(item.requested_quantity) }
+      : item);
+    const exitRecordId = await saveFaceCapture({ snapshot: faceSnapshot, user: bestMatch.user, eventType: 'room_exit', orderId: order.id });
+    const update = await run("UPDATE orders SET items = ?, status = 'Completed' WHERE id = ? AND user = ? AND items = ? AND status != 'Cancelled'", [JSON.stringify(completedItems), order.id, user.trim(), order.items]);
+    if (update.changes !== 1) {
+      await deleteFaceCapture(exitRecordId);
+      return res.status(409).json({ error: 'ออเดอร์เพิ่งถูกอัปเดต กรุณาโหลดใหม่' });
+    }
     const action = mode === 'borrow' ? 'ยืนยันการเบิกสินค้า' : 'ยืนยันการคืนสินค้า';
     await run('INSERT INTO logs (user, action) VALUES (?, ?)', [user.trim(), `${action} (${order.order_no})`]);
     await run("UPDATE access_sessions SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?", [sessions[0].id]);
@@ -595,12 +1113,19 @@ app.delete('/api/inventory/:id', async (req, res) => {
 const PORT = Number(process.env.PORT || 3002);
 initializeDatabase()
   .then(() => {
+    return Promise.all(Object.values(FACE_CAPTURE_FOLDERS).map((folder) => mkdir(path.join(FACE_CAPTURE_DIRECTORY, folder), { recursive: true })));
+  })
+  .then(() => {
     restoreCancelledOrderStock()
       .then(() => expirePendingOrders())
+      .then(() => cleanupExpiredFaceCaptures())
       .then(() => {
         setInterval(() => {
           expirePendingOrders().catch((error) => console.error('ตรวจสอบออเดอร์หมดเวลาไม่สำเร็จ:', error));
         }, 60 * 1000);
+        setInterval(() => {
+          cleanupExpiredFaceCaptures().catch((error) => console.error('ลบภาพบันทึกใบหน้าหมดอายุไม่สำเร็จ:', error));
+        }, 24 * 60 * 60 * 1000);
         app.listen(PORT, '0.0.0.0', () => {
           console.log(`Server running on port ${PORT}`);
         });

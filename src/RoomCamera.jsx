@@ -6,6 +6,8 @@ import { API_BASE } from "./api";
 
 export default function RoomCamera({ onBack }) {
   const [identifiedUser, setIdentifiedUser] = useState(null);
+  const [entryDescriptor, setEntryDescriptor] = useState(null);
+  const [entrySnapshot, setEntrySnapshot] = useState("");
   const [session, setSession] = useState(null);
   const [order, setOrder] = useState(null);
   const [orderLoading, setOrderLoading] = useState(false);
@@ -15,6 +17,7 @@ export default function RoomCamera({ onBack }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [completed, setCompleted] = useState(false);
+  const [exited, setExited] = useState(false);
   const [cameraScannerOpen, setCameraScannerOpen] = useState(false);
   const [cameraScannerError, setCameraScannerError] = useState("");
   const recognitionInFlightRef = useRef(false);
@@ -22,14 +25,15 @@ export default function RoomCamera({ onBack }) {
   const scannerControlsRef = useRef(null);
   const cameraResultHandledRef = useRef(false);
 
-  const recognizeRoomUser = async (descriptor) => {
+  const recognizeRoomUser = async (descriptor, faceSnapshot) => {
     if (identifiedUser || recognitionInFlightRef.current) return;
     recognitionInFlightRef.current = true;
     setError("");
     try {
-      const { data } = await axios.post(`${API_BASE}/api/auth/face/recognize`, { descriptor });
-      const access = await axios.get(`${API_BASE}/api/access/room/session`, { params: { user: data.user.username } });
-      setSession(access.data.session);
+      const { data } = await axios.post(`${API_BASE}/api/access/room/verify-face`, { descriptor, faceSnapshot });
+      setEntryDescriptor(descriptor);
+      setEntrySnapshot(faceSnapshot || "");
+      setSession(data.session);
       setIdentifiedUser(data.user);
     } catch (requestError) {
       setError(requestError.response?.data?.error || "รู้จำใบหน้าไม่สำเร็จ");
@@ -69,7 +73,7 @@ export default function RoomCamera({ onBack }) {
   };
 
   const recordBarcode = async (value) => {
-    if (!order || !value.trim() || scanning || completed) return;
+    if (!order || !value.trim() || scanning || completed || exited) return;
     setScanning(true);
     setError("");
     setMessage("");
@@ -142,18 +146,26 @@ export default function RoomCamera({ onBack }) {
     };
   }, [cameraScannerOpen]);
 
-  const confirmOrder = async () => {
-    if (!order || completing || completed) return;
+  const confirmOrder = async (action = "complete") => {
+    if (!session || (action === "complete" && !order) || !entryDescriptor || !entrySnapshot || completing || completed || exited) return;
     setCompleting(true);
     setError("");
     setMessage("");
     try {
-      const { data } = await axios.post(`/api/orders/${order.id}/complete`, {
-        user: session.user,
-        mode: session.mode,
-      });
+      const payload = { user: session.user, orderId: order?.id || session.orderId, mode: session.mode, descriptor: entryDescriptor, faceSnapshot: entrySnapshot };
+      const { data } = action === "complete"
+        ? await axios.post(`/api/orders/${session.orderId}/complete`, payload)
+        : await axios.post(`${API_BASE}/api/access/room/exit`, payload);
       setMessage(data.message);
-      setCompleted(true);
+      if (action === "complete" && session.mode === "borrow") {
+        setOrder((current) => current && ({
+          ...current,
+          status: "Completed",
+          items: current.items.map((item) => ({ ...item, picked_quantity: Number(item.requested_quantity) })),
+        }));
+      }
+      setCompleted(action === "complete");
+      setExited(true);
     } catch (requestError) {
       setError(requestError.response?.data?.error || "ยืนยันรายการไม่สำเร็จ");
     } finally {
@@ -167,19 +179,23 @@ export default function RoomCamera({ onBack }) {
       : Number(item.returned_quantity) >= Number(item.picked_quantity)
   ));
   const modeLabel = session?.mode === "borrow" ? "เบิกสินค้า" : "คืนสินค้า";
+  const canConfirmOrder = Boolean(order) && (session?.mode === "borrow" || allItemsScanned);
+  const confirmLabel = session?.mode === "borrow" && !allItemsScanned
+    ? "ยืนยันการเบิกทันที"
+    : `ยืนยันการ${modeLabel} และออกจากห้อง`;
 
   return (
     <div className="min-h-screen bg-base text-slate-100">
       <header className="flex h-16 items-center justify-between border-b border-line bg-base px-5">
         <div className="flex items-center gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-400/10 text-emerald-300"><Camera size={22} /></div><div><h1 className="font-bold">SMART STORAGE · ROOM CAMERA</h1><p className="text-xs text-slate-500">กล้องตรวจสอบภายในห้องเก็บของ</p></div></div>
-        <button onClick={onBack} className="flex items-center gap-2 rounded-md border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-white/5"><ChevronLeft size={16} /> กลับ</button>
+        <button disabled={completing} onClick={() => identifiedUser && session && !exited ? confirmOrder("leave") : onBack()} className="flex items-center gap-2 rounded-md border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 disabled:opacity-50">{identifiedUser && session && !exited ? <DoorOpen size={16} /> : <ChevronLeft size={16} />}{identifiedUser && session && !exited ? completing ? "กำลังบันทึก..." : "ยืนยันออกจากห้อง" : "กลับ"}</button>
       </header>
 
       <main className="mx-auto max-w-3xl space-y-5 px-5 py-8">
         <section className="space-y-4 rounded-xl border border-line bg-panel p-5 sm:p-6">
           <div><h2 className="text-2xl font-bold">ยืนยันตัวตนภายในห้อง</h2><p className="mt-1 text-sm text-slate-400">สแกนใบหน้าเพื่อเรียกออเดอร์ที่อนุมัติจากหน้าประตู</p></div>
           {!identifiedUser ? <>
-            <FaceCamera onDescriptor={recognizeRoomUser} />
+            <FaceCamera captureSnapshot onDescriptor={recognizeRoomUser} />
             {error && <p role="alert" className="rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</p>}
           </> : session && <div role="status" className="flex items-center gap-3 rounded-lg border border-emerald-400/30 bg-emerald-400/10 p-4"><BadgeCheck className="shrink-0 text-emerald-300" size={24} /><div><p className="text-xs text-emerald-200">พบรายการที่อนุมัติจากหน้าประตู</p><p className="font-bold text-white">{identifiedUser.fullName || identifiedUser.username}</p><p className="text-xs text-slate-300">{session.orderNo} · {modeLabel}</p></div></div>}
         </section>
@@ -192,7 +208,7 @@ export default function RoomCamera({ onBack }) {
             return <div className="flex items-center justify-between gap-3 py-3 text-sm" key={item.id}><span>{item.name}<small className="ml-2 text-slate-500">{item.sku || `ID ${item.id}`}</small></span><span className={`shrink-0 font-semibold ${current >= total ? "text-emerald-300" : "text-slate-300"}`}>{current} / {total} {item.unit}</span></div>;
           })}</div>}
 
-          {!completed && <form onSubmit={submitBarcode} className="space-y-3">
+          {!completed && !exited && <form onSubmit={submitBarcode} className="space-y-3">
             <label className="block text-sm font-semibold">สแกนบาร์โค้ดสินค้า<input autoFocus value={barcode} onChange={(event) => setBarcode(event.target.value)} className="input mt-2 font-mono" placeholder="สแกนรหัสสินค้าแล้วกด Enter" disabled={!order || scanning || orderLoading} /></label>
             <div className="grid gap-2 sm:grid-cols-2">
               <button type="button" onClick={() => setCameraScannerOpen(true)} disabled={!order || scanning || orderLoading} className="flex items-center justify-center gap-2 rounded-lg border border-emerald-400/40 py-3 text-sm font-semibold text-emerald-200 hover:bg-emerald-400/10 disabled:cursor-not-allowed disabled:opacity-40"><Camera size={17} />สแกนด้วยกล้อง</button>
@@ -202,8 +218,8 @@ export default function RoomCamera({ onBack }) {
 
           {message && <p role="status" className={`rounded-lg border px-4 py-3 text-sm ${completed ? "border-amber-400/30 bg-amber-400/10 text-amber-100" : "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"}`}>{message}</p>}
           {error && identifiedUser && <p role="alert" className="rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</p>}
-          {!completed && <button type="button" onClick={confirmOrder} disabled={!order || !allItemsScanned || completing || orderLoading} className="flex w-full items-center justify-center gap-2 rounded-lg bg-neon px-4 py-3 font-bold text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"><DoorOpen size={18} />{completing ? "กำลังยืนยัน..." : `ยืนยันการ${modeLabel}`}</button>}
-          {completed && <button type="button" onClick={onBack} className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-600 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5"><CheckCircle2 size={18} /> จบการทำรายการ</button>}
+          {!completed && !exited && <button type="button" onClick={() => confirmOrder("complete")} disabled={!canConfirmOrder || !entryDescriptor || !entrySnapshot || completing || orderLoading} className="flex w-full items-center justify-center gap-2 rounded-lg bg-neon px-4 py-3 font-bold text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"><DoorOpen size={18} />{completing ? "กำลังยืนยัน..." : confirmLabel}</button>}
+          {(completed || exited) && <button type="button" onClick={onBack} className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-600 px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5"><CheckCircle2 size={18} /> จบการทำรายการ</button>}
           {error && !identifiedUser && null}
         </section>}
 

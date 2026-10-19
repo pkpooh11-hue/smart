@@ -52,8 +52,8 @@ function ProductCard({ item, count, onAdd, onChange }) {
   const status = statusFor(item);
   const unavailable = Number(item.quantity) <= 0;
   return (
-    <article className="group flex min-h-[400px] flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-lg shadow-black/20 transition duration-300 hover:-translate-y-1 hover:border-neon/60 hover:shadow-[0_12px_35px_rgba(34,197,94,0.14)]">
-      <div className="relative flex w-full shrink-0 items-center justify-center overflow-hidden border-b border-line bg-[#101816]" style={{ height: 178, minHeight: 178, maxHeight: 178 }}>
+    <article className="group flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-xl border border-line bg-panel shadow-lg shadow-black/20 transition duration-300 hover:-translate-y-1 hover:border-neon/60 hover:shadow-[0_12px_35px_rgba(34,197,94,0.14)] sm:min-h-[400px]">
+      <div className="relative flex aspect-[4/3] w-full shrink-0 items-center justify-center overflow-hidden border-b border-line bg-[#101816] sm:aspect-auto sm:h-[178px]">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(34,197,94,0.12),transparent_65%)]" />
         <div className="absolute -right-8 -top-10 h-28 w-28 rounded-full border border-emerald-300/10 transition duration-500 group-hover:scale-150" />
         {item.image_url ? (
@@ -67,12 +67,12 @@ function ProductCard({ item, count, onAdd, onChange }) {
         )}
       </div>
       <div className="flex flex-1 flex-col p-4">
-        <div className="mb-2 flex items-start justify-between gap-2">
-          <div className="min-w-0"><h3 className="truncate text-lg font-extrabold leading-tight text-white" style={{ color: "#f8fafc", textShadow: "0 1px 10px rgba(255,255,255,0.18)" }}>{item.name}</h3><p className="mt-1 truncate text-xs font-medium text-slate-300" style={{ color: "#94a3b8" }}>{item.sku || item.category || "อุปกรณ์"}</p></div>
+          <div className="mb-2 flex items-start justify-between gap-2">
+          <div className="min-w-0"><h3 className="break-words text-base font-extrabold leading-tight text-white sm:text-lg" style={{ color: "#f8fafc", textShadow: "0 1px 10px rgba(255,255,255,0.18)" }}>{item.name}</h3><p className="mt-1 break-words text-xs font-medium text-slate-300" style={{ color: "#94a3b8" }}>{item.sku || item.category || "อุปกรณ์"}</p></div>
           <span className={`shrink-0 rounded-full border border-white/10 px-3 py-1.5 text-[11px] font-bold shadow-sm ${status.color}`}>{status.label}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <span className="text-base font-bold text-emerald-300" style={{ color: "#6ee7b7" }}>
+          <span className="break-words text-sm font-bold text-emerald-300 sm:text-base" style={{ color: "#6ee7b7" }}>
             คงเหลือ: {Number(item.quantity).toLocaleString()}{" "}
             {item.unit || "ชิ้น"}
           </span>
@@ -109,6 +109,7 @@ function ProductCard({ item, count, onAdd, onChange }) {
 export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
   const [items, setItems] = useState([]);
   const [cart, setCart] = useState({});
+  const [cartOpen, setCartOpen] = useState(false);
   const [draftQuantities, setDraftQuantities] = useState({});
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("ทั้งหมด");
@@ -247,14 +248,14 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
               <ShoppingCart className="text-neon" size={25} />
               <h2 className="text-2xl font-bold">เบิกสินค้า</h2>
             </div>
-            <button disabled={!cartCount} className="flex items-center gap-2 rounded-lg border border-emerald-500 bg-neon/10 px-4 py-2 text-xs text-emerald-200 transition hover:bg-neon/20 disabled:cursor-not-allowed disabled:opacity-50">
+            <button onClick={() => setCartOpen(true)} disabled={!cartCount} className="flex items-center gap-2 rounded-lg border border-emerald-500 bg-neon/10 px-4 py-2 text-xs text-emerald-200 transition hover:bg-neon/20 disabled:cursor-not-allowed disabled:opacity-50">
               <ShoppingCart size={16} /> ตะกร้าสินค้า{" "}
               <span className="rounded-full bg-neon px-2 py-0.5 text-slate-950">
                 {cartCount}
               </span>
             </button>
           </div>
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_390px]" style={{ gridTemplateColumns: cartCount ? "minmax(0, 1fr) 390px" : "1fr" }}>
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_390px]">
             <section>
               <div className="mb-4 flex flex-wrap gap-2 rounded-lg border border-slate-700/70 bg-[#0b1d30] p-2">
                 <div className="relative min-w-[200px] flex-1">
@@ -283,7 +284,7 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
                 </button>
               </div>
               <h3 className="mb-3 text-lg font-bold">สินค้าทั้งหมด</h3>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-4">
                 {products.map((item) => (
                   <ProductCard
                     key={item.id}
@@ -300,7 +301,7 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
                 </div>
               )}
             </section>
-            {cartCount > 0 && <aside className="h-fit rounded-lg border border-slate-700/70 bg-[#0d2034] p-4 xl:sticky xl:top-4">
+            {cartCount > 0 && <aside className={`${cartOpen ? "fixed" : "hidden"} inset-x-3 bottom-20 z-30 max-h-[70vh] overflow-y-auto rounded-lg border border-slate-700/70 bg-[#0d2034] p-4 shadow-2xl xl:static xl:bottom-auto xl:left-auto xl:right-auto xl:top-auto xl:block xl:max-h-none xl:overflow-visible xl:shadow-none xl:sticky xl:top-4`}>
               <div className="mb-4 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-lg font-bold">
                   <ChevronRight
@@ -309,12 +310,21 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
                   />{" "}
                   ตะกร้าสินค้า
                 </h3>
-                <button
-                  onClick={() => setCart({})}
-                  className="text-xs text-slate-400 hover:text-red-400"
-                >
-                  <Trash2 size={14} className="mr-1 inline" /> ล้างตะกร้า
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setCart({})}
+                    className="text-xs text-slate-400 hover:text-red-400"
+                  >
+                    <Trash2 size={14} className="mr-1 inline" /> ล้างตะกร้า
+                  </button>
+                  <button
+                    onClick={() => setCartOpen(false)}
+                    className="text-slate-400 hover:text-white xl:hidden"
+                    aria-label="ปิดตะกร้าสินค้า"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
               </div>
               <div className="max-h-[44vh] space-y-2 overflow-y-auto">
                 {cartItems.map((item) => (

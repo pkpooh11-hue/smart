@@ -13,6 +13,7 @@ dist-ssr
 *.local
 .env
 Backend/storage.db
+Backend/private/face-captures/
 
 # Editor directories and files
 .vscode/*

@@ -3,7 +3,15 @@ import { Camera, LoaderCircle } from "lucide-react";
 
 const MODEL_URL = "/face-models";
 
-export default function FaceCamera({ onDescriptor, onCapture, captureLabel = "บันทึกตัวอย่างใบหน้า" }) {
+const captureJpeg = (video) => {
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.78);
+};
+
+export default function FaceCamera({ onDescriptor, onCapture, captureSnapshot = false, captureLabel = "บันทึกตัวอย่างใบหน้า" }) {
   const videoRef = useRef(null);
   const callbackRef = useRef({ onDescriptor, onCapture });
   const busyRef = useRef(false);
@@ -117,7 +125,7 @@ export default function FaceCamera({ onDescriptor, onCapture, captureLabel = "�
                 setStatus("เก็บตัวอย่างใบหน้าครบ 3 ครั้งแล้ว");
               }
             } else if (!autoCapture && Date.now() - lastDescriptorAtRef.current >= 2500) {
-              callbackRef.current.onDescriptor?.(descriptor);
+              callbackRef.current.onDescriptor?.(descriptor, captureSnapshot ? captureJpeg(videoRef.current) : null);
               lastDescriptorAtRef.current = Date.now();
               stableFramesRef.current = 0;
             }
@@ -152,7 +160,7 @@ export default function FaceCamera({ onDescriptor, onCapture, captureLabel = "�
       <div className="rounded-lg border border-line bg-base p-4">
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-neon/10 text-neon"><Camera size={22} /></div>
         <p className="font-semibold">ยินยอมใช้กล้องและประมวลผลใบหน้า</p>
-        <p className="mt-2 text-xs leading-5 text-slate-400">กล้องจะทำงานในอุปกรณ์นี้ ระบบสร้าง face descriptor เพื่อเทียบตัวตนโดยไม่ส่งหรือจัดเก็บภาพดิบ การรู้จำนี้ไม่มี liveness detection และไม่ควรใช้เป็นปัจจัยเดียวสำหรับเปิดประตูจริง</p>
+        <p className="mt-2 text-xs leading-5 text-slate-400">{captureSnapshot ? "เมื่อยืนยันสิทธิ์สำเร็จ ระบบจะส่งภาพนิ่งจากกล้องไปเก็บในเซิร์ฟเวอร์เพื่อบันทึกการเข้าห้อง เบิก หรือคืนของ โดยเก็บไว้ 30 วัน การรู้จำไม่มี liveness detection และไม่ควรใช้เป็นปัจจัยเดียวสำหรับเปิดประตูจริง" : "กล้องจะทำงานในอุปกรณ์นี้ ระบบสร้าง face descriptor เพื่อเทียบตัวตนโดยไม่ส่งหรือจัดเก็บภาพดิบ การรู้จำนี้ไม่มี liveness detection และไม่ควรใช้เป็นปัจจัยเดียวสำหรับเปิดประตูจริง"}</p>
         <label className="mt-4 flex items-start gap-2 text-xs text-slate-300"><input type="checkbox" checked={consentChecked} onChange={(event) => setConsentChecked(event.target.checked)} className="mt-0.5 accent-emerald-400" />ฉันยินยอมให้ระบบเปิดกล้องและประมวลผลใบหน้าตามข้อความข้างต้น</label>
         <button type="button" disabled={!consentChecked} onClick={() => setCameraStarted(true)} className="mt-4 w-full rounded-lg bg-neon px-4 py-3 text-sm font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">เปิดกล้อง</button>
       </div>

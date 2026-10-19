@@ -58,6 +58,7 @@ function SecurityCard({ icon: Icon, title, detail, onClick, ready = false }) {
 export default function Access({ user, onBack, onLogout, onUserUpdated, onNavigate }) {
   const displayName = user?.fullName || user?.username || "MONMON";
   const [username, setUsername] = useState(user?.username || "monmon");
+  const [studentId, setStudentId] = useState(user?.studentId || "");
   const [editing, setEditing] = useState(false);
   const [fullName, setFullName] = useState(displayName);
   const [email, setEmail] = useState(user?.email || "");
@@ -100,12 +101,14 @@ export default function Access({ user, onBack, onLogout, onUserUpdated, onNaviga
   };
 
   const saveProfile = async (imageOverride = profileImage) => {
+    if (typeof imageOverride !== "string") imageOverride = profileImage;
     try {
-      const data = await request(`/users/${user.id}/profile`, { method: "PUT", body: JSON.stringify({ username, fullName, email, profileImage: imageOverride }) });
-      onUserUpdated(data.user);
+      const data = await request(`/users/${user.id}/profile`, { method: "PUT", body: JSON.stringify({ username, studentId, fullName, email, profileImage: imageOverride }) });
+      const updatedUser = { ...data.user, studentId: data.user.studentId || studentId.trim() };
+      onUserUpdated(updatedUser);
       setEditing(false);
-      setShowEmailVerification(Boolean(data.user.email && !data.user.emailVerified));
-      setMessage(data.user.emailVerified ? "บันทึกข้อมูลโปรไฟล์แล้ว" : "ส่งรหัสยืนยันไปที่อีเมลแล้ว กรุณาตรวจสอบกล่องข้อความ");
+      setShowEmailVerification(Boolean(updatedUser.email && !updatedUser.emailVerified));
+      setMessage(updatedUser.emailVerified ? "บันทึกข้อมูลโปรไฟล์แล้ว" : "ส่งรหัสยืนยันไปที่อีเมลแล้ว กรุณาตรวจสอบกล่องข้อความ");
       setError("");
     } catch (requestError) { setError(requestError.message); }
   };
@@ -240,9 +243,10 @@ export default function Access({ user, onBack, onLogout, onUserUpdated, onNaviga
                   <div className="flex-1"><h3 className="text-xl font-bold">{displayName}</h3><p className="mt-1 text-sm text-slate-400">@{username}</p><span className="mt-3 inline-flex items-center gap-1 rounded-full bg-emerald-400/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> ออนไลน์</span></div>
                   <div className="flex items-center gap-2"><button onClick={() => setEditing((current) => !current)} className="flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-2 text-xs text-slate-300 hover:border-emerald-400 hover:text-emerald-300"><Pencil size={14} /> แก้ไขข้อมูล</button><div className="rounded-lg border border-emerald-400/20 bg-emerald-400/5 px-4 py-3 text-right"><p className="text-[10px] text-slate-500">บทบาท</p><p className="mt-1 font-semibold text-emerald-300">ผู้ใช้งานระบบ</p></div></div>
                 </div>
-                {editing && <div className="mt-4 grid gap-3 rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-4 sm:grid-cols-[1fr_1fr_1fr_auto]"><label className="text-xs text-slate-300">ชื่อผู้ใช้<input value={username} onChange={(event) => setUsername(event.target.value)} className="input mt-1.5" /></label><label className="text-xs text-slate-300">ชื่อ-นามสกุล<input value={fullName} onChange={(event) => setFullName(event.target.value)} className="input mt-1.5" /></label><label className="text-xs text-slate-300">อีเมล<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="input mt-1.5" placeholder="name@example.com" /></label><button onClick={saveProfile} className="flex items-center justify-center gap-2 self-end rounded-lg bg-emerald-400 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-300"><Save size={16} /> บันทึก</button></div>}
-                <div className="grid gap-3 pt-5 sm:grid-cols-3">
+                {editing && <div className="mt-4 grid gap-3 rounded-lg border border-emerald-400/20 bg-emerald-400/5 p-4 sm:grid-cols-[1fr_1fr_1fr_1fr_auto]"><label className="text-xs text-slate-300">ชื่อผู้ใช้<input value={username} onChange={(event) => setUsername(event.target.value)} className="input mt-1.5" /></label><label className="text-xs text-slate-300">รหัสนักเรียน<input value={studentId} onChange={(event) => setStudentId(event.target.value)} className="input mt-1.5" inputMode="numeric" /></label><label className="text-xs text-slate-300">ชื่อ-นามสกุล<input value={fullName} onChange={(event) => setFullName(event.target.value)} className="input mt-1.5" /></label><label className="text-xs text-slate-300">อีเมล<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="input mt-1.5" placeholder="name@example.com" /></label><button onClick={saveProfile} className="flex items-center justify-center gap-2 self-end rounded-lg bg-emerald-400 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-300"><Save size={16} /> บันทึก</button></div>}
+                <div className="grid gap-3 pt-5 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-lg border border-slate-700/70 bg-[#071625] p-3"><p className="text-[10px] text-slate-500">ชื่อผู้ใช้</p><p className="mt-1 text-sm font-semibold">{username}</p></div>
+                  <div className="rounded-lg border border-slate-700/70 bg-[#071625] p-3"><p className="text-[10px] text-slate-500">รหัสนักเรียน</p><p className="mt-1 text-sm font-semibold">{studentId || "ยังไม่ได้เพิ่ม"}</p></div>
                   <div className="rounded-lg border border-slate-700/70 bg-[#071625] p-3"><p className="text-[10px] text-slate-500">อีเมล</p><p className="truncate text-sm font-semibold">{user?.email || "ยังไม่ได้เพิ่มอีเมล"}</p></div>
                   <div className="rounded-lg border border-slate-700/70 bg-[#071625] p-3"><p className="text-[10px] text-slate-500">สถานะอีเมล</p><p className="mt-1 text-sm font-semibold">{user?.emailVerified ? "ยืนยันแล้ว" : "ยังไม่ได้ยืนยัน"}</p></div>
                 </div>

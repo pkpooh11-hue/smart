@@ -3,6 +3,9 @@ import Inventory from "./Inventory";
 import Withdraw from "./Withdraw";
 import Orders from "./Orders";
 import Access from "./Access";
+import AccessHistory from "./AccessHistory";
+import UserManagement from "./UserManagement";
+import RoleAudit from "./RoleAudit";
 import Kiosk from "./Kiosk";
 import RoomCamera from "./RoomCamera";
 import { API_BASE } from "./api";
@@ -13,13 +16,50 @@ import {
   Box, Warehouse, ChevronRight, CircleCheck, Camera, UserRound,
   ShoppingCart, ClipboardList,
   UserPlus, Eye, EyeOff, ArrowRight, ScanLine,
+  LogIn, X,
 } from "lucide-react";
 
 const AUTH_API = `${API_BASE}/api/auth`;
 
+function LiveAccessToast({ onOpenHistory }) {
+  const [record, setRecord] = useState(null);
+
+  useEffect(() => {
+    const eventStream = new EventSource(`${API_BASE}/api/access/records/stream`, { withCredentials: true });
+    let dismissTimer;
+    eventStream.onmessage = (event) => {
+      try {
+        const nextRecord = JSON.parse(event.data);
+        if (!['room_entry', 'room_exit'].includes(nextRecord.eventType)) return;
+        setRecord(nextRecord);
+        window.clearTimeout(dismissTimer);
+        dismissTimer = window.setTimeout(() => setRecord(null), 10000);
+      } catch (error) {
+        console.error("อ่านการแจ้งเตือนเข้าออกไม่สำเร็จ", error);
+      }
+    };
+    return () => {
+      eventStream.close();
+      window.clearTimeout(dismissTimer);
+    };
+  }, []);
+
+  if (!record) return null;
+  const entering = record.eventType === "room_entry";
+  return (
+    <div role="status" aria-live="polite" className="fixed right-4 top-20 z-[100] w-[min(24rem,calc(100vw-2rem))] rounded-lg border border-emerald-400/40 bg-[#0b1d2d] p-4 shadow-2xl shadow-black/40">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-400/10 text-emerald-300">{entering ? <LogIn size={17} /> : <LogOut size={17} />}</div>
+        <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-emerald-300">มีผู้{entering ? "สแกนเข้าห้อง" : "สแกนออกจากห้อง"}</p><p className="mt-1 truncate font-bold text-white">{record.username}</p><p className="mt-1 text-[11px] text-slate-400">{formatBangkokDateTime(record.createdAt)}</p><button type="button" onClick={onOpenHistory} className="mt-2 text-xs font-semibold text-emerald-200 hover:text-white">ดูประวัติการเข้าออก</button></div>
+        <button type="button" onClick={() => setRecord(null)} className="rounded p-1 text-slate-500 hover:bg-white/5 hover:text-white" aria-label="ปิดการแจ้งเตือน"><X size={15} /></button>
+      </div>
+    </div>
+  );
+}
+
 function AuthScreen({ onAuthenticated }) {
   const [mode, setMode] = useState("login");
-  const [form, setForm] = useState({ username: "", fullName: "", email: "", password: "", confirmPassword: "" });
+  const [form, setForm] = useState({ username: "", studentId: "", fullName: "", email: "", password: "", confirmPassword: "" });
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -41,10 +81,11 @@ function AuthScreen({ onAuthenticated }) {
     try {
       const response = await fetch(`${AUTH_API}/${mode}`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username: form.username,
-          ...(mode === "register" ? { fullName: form.fullName } : {}),
+          ...(mode === "register" ? { studentId: form.studentId, fullName: form.fullName } : {}),
           password: form.password,
         }),
       });
@@ -59,7 +100,7 @@ function AuthScreen({ onAuthenticated }) {
       if (mode === "register") {
         setMode("login");
         setForm((current) => ({ ...current, password: "", confirmPassword: "" }));
-        setError("สมัครสมาชิกสำเร็จ เข้าสู่ระบบได้เลย และเพิ่มอีเมลภายหลังในตั้งค่าบัญชี");
+        setError("สมัครสมาชิกสำเร็จ เข้าสู่ระบบด้วย username หรือรหัสนักเรียนได้เลย");
       } else {
         if (remember) localStorage.setItem("smart-storage-user", JSON.stringify(data.user));
         onAuthenticated(data.user);
@@ -94,8 +135,9 @@ function AuthScreen({ onAuthenticated }) {
             <p className="mt-1 text-sm text-slate-400">{mode === "login" ? "เข้าสู่ระบบเพื่อจัดการคลังสินค้า" : "สร้างบัญชีเพื่อเริ่มใช้งานระบบ"}</p>
           </div>
           <form onSubmit={submit} className="space-y-4">
+            {mode === "register" && <label className="block text-sm text-slate-300">รหัสนักเรียน<input required value={form.studentId} onChange={updateField("studentId")} className="input mt-1.5" inputMode="numeric" placeholder="เช่น 67201270006" /></label>}
             {mode === "register" && <label className="block text-sm text-slate-300">ชื่อ-นามสกุล<input required value={form.fullName} onChange={updateField("fullName")} className="input mt-1.5" placeholder="เช่น สมชาย ใจดี" /></label>}
-            <label className="block text-sm text-slate-300">ชื่อผู้ใช้<input required value={form.username} onChange={updateField("username")} className="input mt-1.5" placeholder="Username" autoComplete="username" /></label>
+            <label className="block text-sm text-slate-300">{mode === "login" ? "ชื่อผู้ใช้หรือรหัสนักเรียน" : "ชื่อผู้ใช้"}<input required value={form.username} onChange={updateField("username")} className="input mt-1.5" placeholder={mode === "login" ? "กรอกชื่อผู้ใช้หรือรหัสนักเรียน" : "Username"} autoComplete="username" /></label>
             <label className="block text-sm text-slate-300">รหัสผ่าน<div className="relative mt-1.5"><input required type={showPassword ? "text" : "password"} value={form.password} onChange={updateField("password")} className="input pr-11" placeholder="อย่างน้อย 6 ตัวอักษร" autoComplete={mode === "login" ? "current-password" : "new-password"} /><button type="button" onClick={() => setShowPassword((current) => !current)} className="absolute right-3 top-2.5 text-slate-400 hover:text-white" aria-label="แสดงรหัสผ่าน">{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
             {mode === "register" && <label className="block text-sm text-slate-300">ยืนยันรหัสผ่าน<input required type="password" value={form.confirmPassword} onChange={updateField("confirmPassword")} className="input mt-1.5" placeholder="กรอกรหัสผ่านอีกครั้ง" autoComplete="new-password" /></label>}
             {mode === "login" && <label className="flex items-center gap-2 text-xs text-slate-400"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} className="accent-emerald-400" /> จดจำการเข้าสู่ระบบ</label>}
@@ -121,6 +163,8 @@ const Panel = ({ title, right, children, className = "" }) => (
   </div>
 );
 
+const canSeePage = (user, key) => user?.role === "admin" || user?.permissions?.includes(key);
+
 const Badge = ({ ok, children }) => (
   <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
     ok ? "bg-neon/15 text-neon border border-neon/30"
@@ -129,21 +173,28 @@ const Badge = ({ ok, children }) => (
   </span>
 );
 
-function Sidebar({ active, setActive, onLogout }) {
+function Sidebar({ active, setActive, onLogout, user }) {
   const menu = [
     { key: "dashboard", label: "DASHBOARD", icon: LayoutDashboard },
     { key: "access", label: "ACCESS", icon: UserCheck },
+    { key: "users", label: "ผู้ใช้งาน", icon: Users, nested: true },
+    { key: "access-history", label: "ประวัติการเข้าออก", icon: ClipboardList, nested: true },
+    { key: "roles", label: "บทบาทและสิทธิ์", icon: Settings, nested: true },
+    { key: "role-audit", label: "ประวัติการจัดการบทบาท", icon: ClipboardList, nested: true },
     { key: "inventory", label: "INVENTORY", icon: Package },
+    { key: "withdraw", label: "WITHDRAW", icon: ShoppingCart },
+    { key: "orders", label: "ORDERS", icon: ClipboardList },
     { key: "kiosk", label: "DOOR KIOSK", icon: ScanLine },
     { key: "room-camera", label: "ROOM CAMERA", icon: Camera },
     { key: "alerts", label: "ALERTS", icon: Bell, badge: 3 },
-  ];
+  ].filter(({ key }) => key === "alerts" || canSeePage(user, key));
   return (
     <aside className="hidden lg:flex flex-col w-56 shrink-0 border-r border-line bg-panel/60 py-4">
       <nav className="flex-1 space-y-1 px-3">
-        {menu.map(({ key, label, icon: Icon, badge }) => (
+        {menu.map(({ key, label, icon: Icon, badge, nested }) => (
           <button key={key} onClick={() => setActive(key)}
             className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition
+              ${nested ? "ml-3 !w-[calc(100%-0.75rem)] py-2 text-xs" : ""}
               ${active === key ? "bg-neon/10 text-neon border-l-2 border-neon"
                                : "text-gray-400 hover:bg-white/5"}`}>
             <Icon size={18} /> <span className="flex-1 text-left">{label}</span>
@@ -163,16 +214,20 @@ function Sidebar({ active, setActive, onLogout }) {
   );
 }
 
-function MobileNav({ active, setActive }) {
+function MobileNav({ active, setActive, user }) {
   const menu = [
     { key: "dashboard", label: "หน้าหลัก", icon: LayoutDashboard },
     { key: "access", label: "Access", icon: UserCheck },
+    { key: "users", label: "ผู้ใช้งาน", icon: Users },
+    { key: "access-history", label: "เข้าออก", icon: ClipboardList },
+    { key: "roles", label: "บทบาท", icon: Settings },
+    { key: "role-audit", label: "Log role", icon: ClipboardList },
     { key: "inventory", label: "สินค้า", icon: Package },
     { key: "withdraw", label: "เบิก", icon: ShoppingCart },
     { key: "orders", label: "รายการ", icon: ClipboardList },
     { key: "kiosk", label: "Kiosk", icon: ScanLine },
     { key: "room-camera", label: "กล้อง", icon: Camera },
-  ];
+  ].filter(({ key }) => canSeePage(user, key));
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-[#081a29]/95 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-2xl backdrop-blur lg:hidden">
@@ -200,6 +255,7 @@ export default function App() {
   const [authenticatedUser, setAuthenticatedUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem("smart-storage-user")) || null; } catch { return null; }
   });
+  const [authChecking, setAuthChecking] = useState(() => Boolean(localStorage.getItem("smart-storage-user")));
   const [active, setActive] = useState("dashboard");
   const [now, setNow] = useState(new Date());
   const [inventory, setInventory] = useState([]);
@@ -208,6 +264,7 @@ export default function App() {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   const logout = () => {
+    fetch(`${AUTH_API}/logout`, { method: "POST", credentials: "include" }).catch(() => {});
     localStorage.removeItem("smart-storage-user");
     setAuthenticatedUser(null);
     setProfileMenuOpen(false);
@@ -217,6 +274,34 @@ export default function App() {
     setAuthenticatedUser(user);
     localStorage.setItem("smart-storage-user", JSON.stringify(user));
   };
+
+  const isAdmin = authenticatedUser?.role === "admin";
+  const mobileNav = <MobileNav active={active} setActive={setActive} user={authenticatedUser} />;
+  const accessToast = !canSeePage(authenticatedUser, "access-history") || active === "access-history" ? null : <LiveAccessToast onOpenHistory={() => setActive("access-history")} />;
+
+  useEffect(() => {
+    if (!authenticatedUser) {
+      setAuthChecking(false);
+      return undefined;
+    }
+    let active = true;
+    fetch(`${AUTH_API}/me`, { credentials: "include" })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("session หมดอายุ")))
+      .then(({ user }) => {
+        if (!active) return;
+        setAuthenticatedUser(user);
+        localStorage.setItem("smart-storage-user", JSON.stringify(user));
+      })
+      .catch(() => {
+        if (!active) return;
+        localStorage.removeItem("smart-storage-user");
+        setAuthenticatedUser(null);
+      })
+      .finally(() => {
+        if (active) setAuthChecking(false);
+      });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -248,6 +333,13 @@ export default function App() {
     return () => clearInterval(refreshTimer);
   }, [active]);
 
+  useEffect(() => {
+    if (active !== "alerts" && !canSeePage(authenticatedUser, active)) {
+      setActive("dashboard");
+    }
+  }, [active, authenticatedUser]);
+
+  if (authChecking) return <div className="flex min-h-screen items-center justify-center bg-base text-sm text-slate-400">กำลังตรวจสอบ session...</div>;
   if (!authenticatedUser) return <AuthScreen onAuthenticated={setAuthenticatedUser} />;
 
   const inventoryTotal = inventory.reduce((total, item) => total + Number(item.quantity || 0), 0);
@@ -263,27 +355,27 @@ export default function App() {
   }, {}));
 
   if (active === "inventory") {
-    return <Inventory user={authenticatedUser} onBack={() => setActive("dashboard")} onOpenWithdraw={() => setActive("withdraw")} onNavigate={setActive} />;
+    return <><Inventory user={authenticatedUser} onBack={() => setActive("dashboard")} onOpenWithdraw={() => setActive("withdraw")} onNavigate={setActive} />{mobileNav}{accessToast}</>;
   }
 
   if (active === "access") {
-    return <Access user={authenticatedUser} onBack={() => setActive("dashboard")} onLogout={logout} onUserUpdated={updateAuthenticatedUser} onNavigate={setActive} />;
+    return <><Access user={authenticatedUser} onBack={() => setActive("dashboard")} onLogout={logout} onUserUpdated={updateAuthenticatedUser} onNavigate={setActive} />{mobileNav}{accessToast}</>;
   }
 
   if (active === "withdraw") {
-    return <Withdraw user={authenticatedUser} onBack={() => setActive("inventory")} onOpenOrders={() => setActive("orders")} onNavigate={setActive} />;
+    return <><Withdraw user={authenticatedUser} onBack={() => setActive("inventory")} onOpenOrders={() => setActive("orders")} onNavigate={setActive} />{mobileNav}{accessToast}</>;
   }
 
   if (active === "orders") {
-    return <Orders user={authenticatedUser} onBack={() => setActive("withdraw")} onNavigate={setActive} />;
+    return <><Orders user={authenticatedUser} onBack={() => setActive("withdraw")} onNavigate={setActive} />{mobileNav}{accessToast}</>;
   }
 
   if (active === "kiosk") {
-    return <Kiosk user={authenticatedUser} onBack={() => setActive("dashboard")} />;
+    return <><Kiosk user={authenticatedUser} onBack={() => setActive("dashboard")} />{mobileNav}{accessToast}</>;
   }
 
   if (active === "room-camera") {
-    return <RoomCamera onBack={() => setActive("dashboard")} />;
+    return <><RoomCamera onBack={() => setActive("dashboard")} />{mobileNav}{accessToast}</>;
   }
 
   return (
@@ -342,9 +434,10 @@ export default function App() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar active={active} setActive={setActive} onLogout={logout} />
+        <Sidebar active={active} setActive={setActive} onLogout={logout} user={authenticatedUser} />
 
         <main className="flex-1 overflow-y-auto space-y-4 p-4 pb-24 lg:pb-4">
+          {active === "users" || active === "roles" ? <UserManagement view={active} user={authenticatedUser} onNavigate={setActive} /> : active === "access-history" ? <AccessHistory /> : active === "role-audit" ? <RoleAudit /> : <>
           <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
             <Panel>
               <p className="text-center text-xs text-gray-400 mb-2">DOOR STATUS</p>
@@ -530,9 +623,11 @@ export default function App() {
               </Panel>
             </div>
           </section>
+          </>}
         </main>
       </div>
-      <MobileNav active={active} setActive={setActive} />
+      {mobileNav}
+      {accessToast}
     </div>
   );
 }
