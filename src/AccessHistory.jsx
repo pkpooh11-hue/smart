@@ -133,7 +133,6 @@ export default function AccessHistory() {
     link.click();
     URL.revokeObjectURL(url);
   };
-
   return (
     <section className="space-y-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -161,20 +160,19 @@ export default function AccessHistory() {
 
           <div className="overflow-x-auto">
             <table className="w-full min-w-[680px] text-left text-sm">
-              <thead className="border-b border-line bg-[#091923] text-xs text-slate-400"><tr><th className="px-4 py-3 font-medium">ผู้ใช้งาน</th><th className="px-4 py-3 font-medium">เหตุการณ์</th><th className="px-4 py-3 font-medium">สถานที่</th><th className="px-4 py-3 font-medium">วัน-เวลา</th><th className="px-4 py-3 font-medium">ภาพ</th></tr></thead>
+              <thead className="border-b border-line bg-[#091923] text-xs text-slate-400"><tr><th className="px-4 py-3 font-medium">ผู้ใช้งาน</th><th className="px-4 py-3 font-medium">เหตุการณ์</th><th className="px-4 py-3 font-medium">สถานที่</th><th className="px-4 py-3 font-medium">วัน-เวลา</th></tr></thead>
               <tbody className="divide-y divide-line/70">
                 {visibleRecords.map((record) => {
                   const entering = record.eventType === "room_entry";
-                  return <tr key={record.id} className={`transition hover:bg-white/[0.025] ${selectedRecord?.id === record.id ? "bg-emerald-400/[0.04]" : ""}`}>
+                  return <tr key={record.id} tabIndex={0} aria-label={`แสดงภาพ ${eventLabel(record.eventType)} ${record.username}`} onClick={() => setSelectedRecord(record)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedRecord(record); } }} className={`cursor-pointer transition hover:bg-white/[0.025] focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${selectedRecord?.id === record.id ? "bg-emerald-400/[0.04]" : ""}`}>
                     <td className="px-4 py-3"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-400/10 font-semibold text-emerald-300">{record.username?.[0]?.toUpperCase()}</div><span className="font-semibold text-white">{record.username}</span></div></td>
                     <td className="px-4 py-3"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${entering ? "bg-emerald-400/10 text-emerald-300" : "bg-sky-400/10 text-sky-300"}`}>{entering ? <LogIn size={13} /> : <LogOut size={13} />}{eventLabel(record.eventType)}</span></td>
                     <td className="px-4 py-3 text-slate-300">ห้องเก็บสินค้า</td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-400">{formatBangkokDateTime(record.createdAt)}</td>
-                    <td className="px-4 py-3"><button type="button" onClick={() => setSelectedRecord(record)} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-white/5 hover:text-emerald-300" aria-label={`ดูภาพ ${eventLabel(record.eventType)} ${record.username}`} title="ดูภาพ"><Eye size={17} /></button></td>
                   </tr>;
                 })}
-                {!loading && !visibleRecords.length && <tr><td colSpan="5" className="px-4 py-12 text-center text-sm text-slate-500">{error ? "โหลดข้อมูลไม่สำเร็จ" : "ไม่พบประวัติการเข้าออกในช่วงที่เลือก"}</td></tr>}
-                {loading && <tr><td colSpan="5" className="px-4 py-12 text-center text-sm text-slate-500">กำลังโหลดประวัติ...</td></tr>}
+                {!loading && !visibleRecords.length && <tr><td colSpan="4" className="px-4 py-12 text-center text-sm text-slate-500">{error ? "โหลดข้อมูลไม่สำเร็จ" : "ไม่พบประวัติการเข้าออกในช่วงที่เลือก"}</td></tr>}
+                {loading && <tr><td colSpan="4" className="px-4 py-12 text-center text-sm text-slate-500">กำลังโหลดประวัติ...</td></tr>}
               </tbody>
             </table>
           </div>
@@ -185,12 +183,7 @@ export default function AccessHistory() {
           </footer>
         </section>
 
-        <aside className="space-y-4">
-          <section className="overflow-hidden rounded-lg border border-line bg-panel">
-            <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm font-semibold text-white"><span className="h-2 w-2 rounded-full bg-emerald-400" />กิจกรรมล่าสุด</div>
-            <div className="divide-y divide-line/70">{filteredRecords.slice(0, 5).map((record) => <button type="button" key={record.id} onClick={() => setSelectedRecord(record)} className="flex w-full items-center gap-3 p-3 text-left hover:bg-white/[0.03]"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-400/10 text-emerald-300">{record.eventType === "room_entry" ? <LogIn size={16} /> : <LogOut size={16} />}</div><div className="min-w-0 flex-1"><span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${record.eventType === "room_entry" ? "bg-emerald-400/10 text-emerald-300" : "bg-sky-400/10 text-sky-300"}`}>{eventLabel(record.eventType)}</span><p className="mt-1 truncate text-sm font-semibold text-white">{record.username}</p><p className="mt-0.5 text-[10px] text-slate-500">{formatBangkokDateTime(record.createdAt)}</p></div><ChevronRight size={15} className="shrink-0 text-slate-500" /></button>)}{!loading && !filteredRecords.length && <p className="p-5 text-center text-xs text-slate-500">ยังไม่มีข้อมูล</p>}</div>
-          </section>
-
+        <aside>
           <section className="overflow-hidden rounded-lg border border-line bg-panel">
             <div className="flex items-center gap-2 border-b border-line px-4 py-3 text-sm font-semibold text-white"><span className="h-2 w-2 rounded-full bg-emerald-400" />ภาพจากกล้อง</div>
             {selectedRecord ? <><div className="relative aspect-[4/3] bg-black"><img crossOrigin="use-credentials" src={`${API}/${selectedRecord.id}/image`} alt={`ภาพ ${eventLabel(selectedRecord.eventType)} ของ ${selectedRecord.username}`} className="h-full w-full object-cover" /></div><div className="space-y-2 p-3"><p className="font-semibold text-white">{selectedRecord.username}</p><p className="text-xs text-slate-400">{eventLabel(selectedRecord.eventType)} · ห้องเก็บสินค้า</p><p className="text-[11px] text-slate-500">{formatBangkokDateTime(selectedRecord.createdAt)}</p><button type="button" onClick={() => setImageModalOpen(true)} className="flex w-full items-center justify-center gap-2 rounded-md border border-emerald-400/30 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-400/10"><Eye size={14} />ดูภาพที่บันทึก</button></div></> : <div className="flex aspect-[4/3] flex-col items-center justify-center gap-2 bg-black/40 text-slate-500"><DoorOpen size={25} /><p className="text-xs">เลือกเหตุการณ์เพื่อดูภาพ</p></div>}
