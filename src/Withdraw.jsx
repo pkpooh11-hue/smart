@@ -115,6 +115,7 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
   const [category, setCategory] = useState("ทั้งหมด");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [withdrawFeedback, setWithdrawFeedback] = useState(null);
   const [time, setTime] = useState(new Date());
 
   const fetchItems = async () => {
@@ -166,6 +167,7 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
   const confirmWithdraw = async () => {
     if (!cartItems.length) return;
     setSaving(true);
+    setWithdrawFeedback(null);
     try {
       await axios.post(WITHDRAW_API, {
         items: cartItems.map((item) => ({
@@ -175,14 +177,20 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
         note,
         user: user?.username || "MONMON",
       });
-      alert("เบิกสินค้าสำเร็จ");
       setCart({});
       setNote("");
-      await fetchItems();
+      setCartOpen(false);
+      setWithdrawFeedback({ type: "success", message: "เบิกสินค้าสำเร็จ" });
+      try {
+        await fetchItems();
+      } catch {
+        setWithdrawFeedback({ type: "success", message: "เบิกสินค้าสำเร็จ แต่โหลดคลังสินค้าใหม่ไม่สำเร็จ" });
+      }
     } catch (error) {
-      alert(
-        `เบิกสินค้าไม่สำเร็จ: ${error.response?.data?.error || error.message}`,
-      );
+      setWithdrawFeedback({
+        type: "error",
+        message: `เบิกสินค้าไม่สำเร็จ: ${error.response?.data?.error || error.message}`,
+      });
     } finally {
       setSaving(false);
     }
@@ -216,6 +224,7 @@ export default function Withdraw({ user, onBack, onOpenOrders, onNavigate }) {
           </div>
         </div>
       </header>
+      {withdrawFeedback && <p role={withdrawFeedback.type === "error" ? "alert" : "status"} className={`mx-4 mt-4 rounded-lg border px-4 py-3 text-sm md:mx-6 ${withdrawFeedback.type === "error" ? "border-red-400/30 bg-red-400/10 text-red-200" : "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"}`}>{withdrawFeedback.message}</p>}
       <div className="flex min-h-[calc(100vh-3.5rem)]">
         <aside className="hidden w-36 shrink-0 border-r border-line bg-panel py-4 md:block lg:w-44">
           <nav className="space-y-1 px-2">

@@ -78,7 +78,7 @@ export default function RoomCamera({ onBack }) {
     setError("");
     setMessage("");
     try {
-      const { data } = await axios.post(`/api/orders/${order.id}/scan`, {
+      const { data } = await axios.post(`${API_BASE}/api/orders/${order.id}/scan`, {
         user: session.user,
         mode: session.mode,
         barcode: value.trim(),
@@ -154,7 +154,7 @@ export default function RoomCamera({ onBack }) {
     try {
       const payload = { user: session.user, orderId: order?.id || session.orderId, mode: session.mode, descriptor: entryDescriptor, faceSnapshot: entrySnapshot };
       const { data } = action === "complete"
-        ? await axios.post(`/api/orders/${session.orderId}/complete`, payload)
+        ? await axios.post(`${API_BASE}/api/orders/${session.orderId}/complete`, payload)
         : await axios.post(`${API_BASE}/api/access/room/exit`, payload);
       setMessage(data.message);
       if (action === "complete" && session.mode === "borrow") {
